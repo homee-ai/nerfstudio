@@ -41,6 +41,72 @@ Replace the `CUDA_ARCHITECTURES` by looking up the compute capability for your G
   bash prepare_dataset.sh /folder/of/your/data/colmap/ glomap
   ```
 
+## HomeeAI dataset format
+By running the training pipeline, we will first convert the dataset into the format that nerfstudio expects and then start the training process.
+### preprocess
+Our preprocessor expects the following dataset structure in the source path location:
+```shell
+dataset
+| ---- colmap
+      | ---- distort_images
+      | ---- sparse
+            | --- 0
+                  | --- calibration.json
+                  | --- distort_cameras.txt
+                  | --- images.txt
+                  | --- images_post.txt
+      | --- scene.obj (only for ARKit dataset)
+```
+After preprocessing, you will get the following dataset structure in the source path location:
+```shell
+dataset
+| ---- colmap
+      | ---- distort_images
+      | ---- sparse
+      | ---- post
+            | ---- images
+            | ---- sparse
+                  | ---- offline (if at least one pose-refining method is selected)
+                        | --- method1
+                              | --- final
+                                    | --- cameras.txt(bin)
+                                    | --- images.txt(bin)
+                                    | --- point3D.txt(bin)
+                              | --- ...
+                        | --- method2
+                              | --- final
+                                    | --- cameras.txt(bin)
+                                    | --- images.txt(bin)
+                                    | --- point3D.txt(bin)
+                              | --- ...
+                        | --- ...
+                  | ---- online
+                        | --- cameras.txt
+                        | --- images.txt
+                        | --- point3D.txt
+                  | ---- online_loop
+                        | --- cameras.txt
+                        | --- images.txt
+                        | --- point3D.txt
+      | --- scene.obj (only for ARKit dataset)
+| ---- <root>_nerfstudio (copy to directly train in nerfstudio)
+      | --- images
+      | --- colmap
+            | ---- arkit
+                  | ---- 0
+                        | --- cameras.txt
+                        | --- images.txt
+                        | --- point3D.txt
+            | ---- method1 (optional)
+                  | ---- 0
+                        | --- cameras.txt
+                        | --- images.txt
+                        | --- point3D.txt
+            | ---- method2 (optional)
+            | ---- ...
+      
+```
+
 ## Sending Requests to API to Perform Inferences
 TODO
 
