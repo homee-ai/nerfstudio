@@ -48,7 +48,7 @@ def transformARkitPCL2COLMAPpoint3DwithZaxisUpward(input_ply_path, output_ply_pa
                 if find_start_row and len(elems)==3:
                     xyz = np.array(tuple(map(float, elems[0:3])))
                     # rotated y-up world frame to z-up world frame
-                    xyz = rotx(np.pi / 2) @ xyz
+                    # xyz = rotx(np.pi / 2) @ xyz #NOTE: up vector from +y to +z
                     xyzs[count] = xyz
                     count+=1
 

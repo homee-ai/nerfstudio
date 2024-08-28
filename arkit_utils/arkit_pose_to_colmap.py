@@ -52,10 +52,10 @@ def arkit_pose_to_colmap(dataset_base, file_name, output_folder) :
                 c2w_cv = convert_pose(c2w)
 
                 # transform to z-up world coordinate for better visulazation
-                c2w_cv = np.array([[1, 0, 0, 0],
-                                    [0, 0, -1, 0],
-                                    [0, 1, 0, 0],
-                                    [0, 0, 0, 1]]) @ c2w_cv
+                # c2w_cv = np.array([[1, 0, 0, 0],
+                #                     [0, 0, -1, 0],
+                #                     [0, 1, 0, 0],
+                #                     [0, 0, 0, 1]]) @ c2w_cv
                 w2c_cv = np.linalg.inv(c2w_cv)
                 R = w2c_cv[:3, :3]
                 q = Quaternion(matrix=R, atol=1e-04)

@@ -540,6 +540,32 @@ class Mill19Download(DatasetDownload):
         shutil.rmtree(target_path / "val")
 
 
+homee_file_ids = {
+    "2nd_floor_ball_room_arkit": grab_file_id("https://drive.google.com/file/d/1g8Yfv-G_XlV4nSJrEkHJ1ex0jniouVsu/view?usp=sharing"),
+    "1st_floor_meeting_room_arkit":grab_file_id("https://drive.google.com/file/d/1TfkQVcI_RUI9Xy484b3KtDxZVNr85_0p/view?usp=sharing"), 
+    "7th_floor_meeting_room_arkit": grab_file_id("https://drive.google.com/file/d/1AaswhK8xX3WkTl4qXKgtifnVw0G33o72/view?usp=sharing"), 
+    "farglory95_colmap":grab_file_id("https://drive.google.com/file/d/1j0QdPg638nfec37p99R4MTAwaoK-MwBV/view?usp=sharing"), 
+    "twhg":grab_file_id("https://drive.google.com/file/d/15DdEAP1Ik8fXgTY1iY8NpBLcpAZAnCV1/view?usp=sharing"), 
+}
+
+HomeeCaptureName = str
+
+@dataclass
+class HomeeDownload(DatasetDownload):
+    """Download the homee dataset."""
+
+    capture_name: HomeeCaptureName = "2nd_floor_ball_room"
+
+    def download(self, save_dir:Path):
+        if self.capture_name == "all":
+            for capture_name in homee_file_ids.keys():
+                download_capture_name(save_dir, "homee", capture_name, 
+                              capture_name_to_file_id=homee_file_ids)
+        else:
+            download_capture_name(save_dir, "homee", self.capture_name, 
+                                capture_name_to_file_id=homee_file_ids)
+
+
 Commands = Union[
     Annotated[BlenderDownload, tyro.conf.subcommand(name="blender")],
     Annotated[Sitcoms3DDownload, tyro.conf.subcommand(name="sitcoms3d")],
@@ -550,6 +576,7 @@ Commands = Union[
     Annotated[SDFstudioDemoDownload, tyro.conf.subcommand(name="sdfstudio")],
     Annotated[NeRFOSRDownload, tyro.conf.subcommand(name="nerfosr")],
     Annotated[Mill19Download, tyro.conf.subcommand(name="mill19")],
+    Annotated[HomeeDownload, tyro.conf.subcommand(name="homee")],
 ]
 
 

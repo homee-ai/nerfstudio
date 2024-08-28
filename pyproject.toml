@@ -62,13 +62,16 @@ dependencies = [
     "xatlas",
     "trimesh>=3.20.2",
     "timm==0.6.7",
-    "gsplat==1.0.0",
+    #"gsplat==1.2",
     "pytorch-msssim",
     "pathos",
     "packaging",
-    "fpsample"
+    "fpsample",
+    "tensorly",
+    "evo",
+    "sphecerix",
+    "scipy",
 ]
-
 [project.urls]
 "Documentation" = "https://docs.nerf.studio"
 
@@ -189,6 +192,7 @@ lint.ignore = [
     "PLR0912",  # Too many branches.
     "PLW0603",  # Globa statement updates are discouraged.
     "PLW2901",  # For loop variable overwritten.
+    "PLR1730",  # Replace if statement with min/max
 ]
 
 [tool.ruff.lint.isort]

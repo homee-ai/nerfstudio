@@ -40,7 +40,7 @@ def transformARkitRgbPCL2COLMAPpoint3DwithRgbAndZaxisUpward(input_obj_path, outp
                 if elems[0] == "v":
                     xyz = np.array(tuple(map(float, elems[1:4])))
                     # rotated y-up world frame to z-up world frame
-                    xyz = rotx(np.pi / 2) @ xyz
+                    # xyz = rotx(np.pi / 2) @ xyz #NOTE: up vector from +y to +z
                     xyzs[count] = xyz
                     # rgb = np.array(tuple(map(float, elems[4:7])))
                     # rgbs[count] = rgb*255

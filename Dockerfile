@@ -67,13 +67,7 @@ RUN apt-get update && \
     wget && \
     rm -rf /var/lib/apt/lists/*
 
-# Install CMake 3.30.1 for glomap
- RUN wget https://github.com/Kitware/CMake/releases/download/v3.30.1/cmake-3.30.1.tar.gz && \
-     tar xfvz cmake-3.30.1.tar.gz && cd cmake-3.30.1 && \
-     ./bootstrap && make -j$(nproc) && sudo make install && \
-     cd ../.. && \
-    rm -rf cmake-3.30.1
-    
+
 # Install GLOG (required by ceres).
 RUN git clone --branch v0.6.0 https://github.com/google/glog.git --single-branch && \
     cd glog && \
@@ -111,16 +105,6 @@ RUN git clone --branch 3.8 https://github.com/colmap/colmap.git --single-branch 
     cd ../.. && \
     rm -rf colmap
 
-RUN git clone --recursive https://github.com/colmap/glomap.git && \
-    cd glomap && \
-    mkdir build && \
-    cd build && \
-    cmake .. && \
-    make -j `nproc` && \
-    make install && \
-    cd ../.. && \
-    rm -rf glomap
-
 # Create non root user, add it to custom group and setup environment.
 RUN groupadd --gid $USER_GID $USERNAME \
     && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME -d /home/${USERNAME} --shell /usr/bin/bash 
@@ -133,7 +117,7 @@ RUN echo "${USERNAME}:password" | chpasswd \
     && echo "%sudo ALL=NOPASSWD:/usr/bin/apt-get update, /usr/bin/apt-get upgrade, /usr/bin/apt-get install, /usr/bin/apt-get remove" >> /etc/sudoers
 
 # Create workspace folder and change ownership to new user
-RUN mkdir /workspace && chmod -R 777 /workspace && chown ${USER_UID}:${USER_GID} /workspace
+RUN mkdir /workspace && chown ${USER_UID}:${USER_GID} /workspace
 
 # Switch to new user and workdir.
 USER ${USER_UID}
@@ -143,7 +127,7 @@ WORKDIR /home/${USERNAME}
 ENV PATH="${PATH}:/home/${USERNAME}/.local/bin"
 
 # Upgrade pip and install packages.
-RUN python3.10 -m pip install --no-cache-dir --upgrade pip setuptools==69.5.1 pathtools promise pybind11 omegaconf numba colorlog tabulate
+RUN python3.10 -m pip install --no-cache-dir --upgrade pip setuptools==69.5.1 pathtools promise pybind11 omegaconf
 
 # Install pytorch and submodules
 # echo "${CUDA_VERSION}" | sed 's/.$//' | tr -d '.' -- CUDA_VERSION -> delete last digit -> delete all '.'
