@@ -143,17 +143,6 @@ class ControlPanel:
             cb_hook=lambda _: rerender_cb(),
             hint="Maximum resolution to render in viewport",
         )
-
-        self._move_speed = ViewerSlider(
-            "Move Speed",
-            default_value=0.1,
-            min_value=0.01,
-            max_value=1.0,
-            step=0.01,
-            cb_hook=lambda _: rerender_cb(),
-            hint="调整线性导航的移动速度",
-        )
-
         self._crop_viewport = ViewerCheckbox(
             "Enable ",
             False,
@@ -201,8 +190,6 @@ class ControlPanel:
         self._time = ViewerSlider("Time", 0.0, 0.0, 1.0, 0.01, cb_hook=lambda _: rerender_cb(), hint="Time to render")
         self._time_enabled = time_enabled
 
-        self.add_element(self._move_speed)
-
         self.add_element(self._train_speed)
         self.add_element(self._train_util)
 
@@ -246,11 +233,6 @@ class ControlPanel:
             hint="Set the up direction of the camera orbit controls to the camera's current up direction.",
         )
         self._reset_camera.on_click(self._reset_camera_cb)
-
-    @property
-    def move_speed(self) -> float:
-        """返回当前的移动速度设置"""
-        return self._move_speed.value
 
     def _train_speed_cb(self) -> None:
         pass
