@@ -25,13 +25,11 @@ from typing import Dict, List, Literal, Optional, Tuple, Type, Union
 
 import numpy as np
 import torch
-from gsplat.cuda_legacy._torch_impl import quat_to_rotmat
 
 try:
     from gsplat.rendering import rasterization
 except ImportError:
     print("Please install gsplat>=1.0.0")
-from gsplat.cuda_legacy._wrapper import num_sh_bases
 from gsplat.strategy import DefaultStrategy, MCMCStrategy
 from pytorch_msssim import SSIM
 import open3d as o3d
@@ -50,6 +48,35 @@ from nerfstudio.utils.misc import torch_compile
 from nerfstudio.utils.rich_utils import CONSOLE
 from nerfstudio.utils.general_utils import MeshPointCloud, rot_to_quat_batch
 
+def num_sh_bases(degree: int):
+    if degree == 0:
+        return 1
+    if degree == 1:
+        return 4
+    if degree == 2:
+        return 9
+    if degree == 3:
+        return 16
+    return 25
+
+def quat_to_rotmat(quat):
+    assert quat.shape[-1] == 4, quat.shape
+    w, x, y, z = torch.unbind(quat, dim=-1)
+    mat = torch.stack(
+        [
+            1 - 2 * (y**2 + z**2),
+            2 * (x * y - w * z),
+            2 * (x * z + w * y),
+            2 * (x * y + w * z),
+            1 - 2 * (x**2 + z**2),
+            2 * (y * z - w * x),
+            2 * (x * z - w * y),
+            2 * (y * z + w * x),
+            1 - 2 * (x**2 + y**2),
+        ],
+        dim=-1,
+    )
+    return mat.reshape(quat.shape[:-1] + (3, 3))
 
 def random_quat_tensor(N):
     """
