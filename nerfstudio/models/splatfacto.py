@@ -242,9 +242,6 @@ class SplatfactoModelConfig(ModelConfig):
     noise_lr: float = 5e5
     """MCMC samping noise learning rate"""
 
-    
-
-
 class SplatfactoModel(Model):
     """Nerfstudio's implementation of Gaussian Splatting
 
@@ -265,8 +262,7 @@ class SplatfactoModel(Model):
 
         # use_scale_regularization and use_mesh_initialization can't be able at the same time
         # Now just simply set use_scale_regularization to false
-        if self.config.use_scale_regularization and self.config.use_mesh_initialization:
-            raise ValueError("use_scale_regularization and use_mesh_initialization can't be able at the same time")
+        # if self.config.use_scale_regularization and self.config.use_mesh_initialization:        #     raise ValueError("use_scale_regularization and use_mesh_initialization can't be able at the same time")
         
 
 
@@ -378,6 +374,7 @@ class SplatfactoModel(Model):
                 refine_stop_iter=self.config.stop_split_at,
                 refine_every=self.config.refine_every,
             )
+            self.strategy.check_sanity(self.gauss_params, self.optimizers)
             self.strategy_state = self.strategy.initialize_state()
         else:
             self.strategy = DefaultStrategy(
@@ -859,6 +856,7 @@ class SplatfactoModel(Model):
             scale_reg = 0.1 * scale_reg.mean()
         else:
             scale_reg = torch.tensor(0.0).to(self.device)
+        
 
         loss_dict = {
             "main_loss": (1 - self.config.ssim_lambda) * Ll1 + self.config.ssim_lambda * simloss,

@@ -15,6 +15,7 @@ DIR=$(dirname "$1")
 OUTPUT_PATH="$DIR/output.json"
 RENDER_PATH="$DIR/render"
 RENDER_EVAL_PATH="$DIR/render/eval"
+RENDER_VIDEO_PATH="$DIR/render/video.mp4"  # Changed to include file extension
 
 # metric results
 # e.g.
@@ -33,4 +34,7 @@ RENDER_EVAL_PATH="$DIR/render/eval"
 ns-eval --load-config "$1" --output-path "$OUTPUT_PATH" --render-output-path "$RENDER_EVAL_PATH"
 
 # Render all images in the specified dataset split
-ns-render dataset --load-config "$1" --output-path "$RENDER_PATH" --split "$2"
+# ns-render dataset --load-config "$1" --output-path "$RENDER_PATH" --split "$2"
+
+# Render an interpolated video
+ns-render interpolate --load-config "$1" --output-path "$RENDER_VIDEO_PATH" --frame-rate 60 --output-format "video" --interpolation-steps 60
