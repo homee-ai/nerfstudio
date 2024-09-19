@@ -17,7 +17,6 @@ Replace the `CUDA_ARCHITECTURES` by [looking up the compute capability for your 
 ### 2. Run the docker container
   ```shell
   docker run --gpus all \                                         # Give the container access to nvidia GPU (required).
-            -u $(id -u) \                                       # To prevent abusing of root privilege, please use custom user privilege to start.
             -v /folder/of/your/data:/workspace/ \               # Mount a folder from the local machine into the container to be able to process them (required).
             -v /home/<YOUR_USER>/.cache/:/home/user/.cache/ \   # Mount cache folder to avoid re-downloading of models everytime (recommended).
             -p 7007:7007 \                                      # Map port from local machine to docker container (required to access the web interface/UI).
@@ -29,11 +28,11 @@ Replace the `CUDA_ARCHITECTURES` by [looking up the compute capability for your 
 
 ### 3. Run the training pipeline
   ```shell
-  bash run.sh /folder/of/your/data/colmap/ [colmap|glomap]
+  bash run.sh /folder/of/your/data/colmap/ colmap
   ```
 Where:
 - `/folder/of/your/data/colmap/` is the path to your dataset
-- Choose either `colmap` or `glomap` as the pose optimization method
+- `colmap` as the pose optimization method
 
 ## HomeeAI dataset format
 By running the training pipeline, we will first convert the dataset into the format that nerfstudio expects and then start the training process.

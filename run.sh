@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
+
+
 # Validate the input arguments
 if [ $# -lt 1 ]; then
   echo "Usage: $0 <input_base_path> [<method1> <method2> ...] [--skip-preprocess]"
@@ -55,6 +57,7 @@ if [ "$skip_preprocess" = false ]; then
   python arkit_utils/undistort_images/undistort_image_cuda.py --input_base ${input_base_path}
 
   echo "2. Transform ARKit mesh to point3D"
+  cp  ${input_base_path}../scene.obj ${input_base_path}
   python arkit_utils/mesh_to_points3D/arkitobj2point3D.py --input_base_path ${input_base_path}
 
   echo "3. Transform ARKit pose to COLMAP coordinate"
