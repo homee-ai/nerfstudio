@@ -69,7 +69,11 @@ dependencies = [
     "fpsample",
     "tensorly",
     "evo",
+    "sphecerix",
     "scipy",
+    "numba",
+    "colorlog",
+    "tabulate",
     "numpy==1.24.3",
 ]
 

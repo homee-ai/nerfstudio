@@ -4,8 +4,8 @@
 eval "$(conda shell.bash hook)"
 
 echo "======Phase 1: Setting up Conda environment======"
-conda create --name homee_nerfstudio -y python=3.8
-conda activate homee_nerfstudio
+conda create --name homee_nerfstudio_test -y python=3.8
+conda activate homee_nerfstudio_test
 
 
 echo "======Phase 2: Installing Nerfstudio dependencies======"
@@ -17,7 +17,8 @@ pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindi
 # may take a while to build tinycudann...
 
 echo "======Phase 3: Installing HLOC======"
-pip install git+https://github.com/cvg/Hierarchical-Localization.git
+git clone --recursive https://github.com/cvg/Hierarchical-Localization/
+python -m pip install -e Hierarchical-Localization
 
 echo "======Phase 4: Installing COLMAP dependencies======"
 sudo apt-get install \

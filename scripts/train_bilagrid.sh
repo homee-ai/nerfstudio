@@ -8,5 +8,7 @@ ns-train splatfacto --data "$1" \
 --pipeline.model.camera-optimizer.mode off \
 --pipeline.model.use_mesh_initialization False \
 --pipeline.model.use_bilateral_grid True \
-colmap 
-
+colmap \
+--auto_scale_poses False \
+--center_method none \
+--orientation_method none \

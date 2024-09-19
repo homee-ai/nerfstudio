@@ -23,10 +23,9 @@ ns-train splatfacto-w --data "$1" \
 --pipeline.model.use-scale-regularization False  \
 --pipeline.model.camera-optimizer.mode off \
 colmap \
---auto_scale_poses True \
---assume_colmap_world_coordinate_convention False \
---center_method poses \
---orientation_method up
+--auto_scale_poses False \
+--center_method none \
+--orientation_method none \
 
 # vanilla wild + mip
 # ns-train splatfacto-w --data "$1" \
