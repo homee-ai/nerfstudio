@@ -199,3 +199,9 @@ camera_paths/
 # images
 *.png
 *.jpg
+
+# compress
+/PLAS
+/colmap
+/gsplat
+/compression
