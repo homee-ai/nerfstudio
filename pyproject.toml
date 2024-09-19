@@ -62,7 +62,7 @@ dependencies = [
     "xatlas",
     "trimesh>=3.20.2",
     "timm==0.6.7",
-    #"gsplat==1.2",
+    "gsplat==1.2",
     "pytorch-msssim",
     "pathos",
     "packaging",
@@ -71,6 +71,11 @@ dependencies = [
     "evo",
     "sphecerix",
     "scipy",
+    "numba",
+    "colorlog",
+    "tabulate",
+    "torchpq",
+    #"git+https://github.com/rahul-goel/fused-ssim@84422e0da94c516220eb3acedb907e68809e9e01",
 ]
 [project.urls]
 "Documentation" = "https://docs.nerf.studio"
