@@ -108,7 +108,6 @@ def rectified_intrinsic(input_path, output_path, crop_x, crop_y):
             line = line.strip()
             if len(line) > 0 and line[0] != "#":
                 num_intrinsic += 1
-    print(num_intrinsic)
 
     camera_ids = np.empty((num_intrinsic, 1))
     widths = np.empty((num_intrinsic, 1))

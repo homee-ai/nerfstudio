@@ -27,14 +27,17 @@ import numpy as np
 import torch
 
 try:
-    from gsplat.rendering import rasterization
+    from gsplat.rendering import rasterization, rasterization_2dgs, rasterization_2dgs_inria_wrapper
 except ImportError:
     print("Please install gsplat>=1.0.0")
 from gsplat.strategy import DefaultStrategy, MCMCStrategy
+from gsplat.compression import PngCompression
+
 from pytorch_msssim import SSIM
 import open3d as o3d
 import open3d.core as o3c
 from torch.nn import Parameter
+from fused_ssim import fused_ssim
 
 from nerfstudio.cameras.camera_optimizers import CameraOptimizer, CameraOptimizerConfig
 from nerfstudio.cameras.cameras import Cameras
@@ -47,6 +50,7 @@ from nerfstudio.utils.colors import get_color
 from nerfstudio.utils.misc import torch_compile
 from nerfstudio.utils.rich_utils import CONSOLE
 from nerfstudio.utils.general_utils import MeshPointCloud, rot_to_quat_batch
+import os
 
 def num_sh_bases(degree: int):
     if degree == 0:
@@ -160,9 +164,9 @@ class SplatfactoModelConfig(ModelConfig):
     """training starts at 1/d resolution, every n steps this is doubled"""
     background_color: Literal["random", "black", "white"] = "random"
     """Whether to randomize the background color."""
-    num_downscales: int = 2
+    num_downscales: int = 0
     """at the beginning, resolution is 1/2^d, where d is this number"""
-    cull_alpha_thresh: float = 0.1
+    cull_alpha_thresh: float = 0.05
     """threshold of opacity for culling gaussians. One can set it to a lower value (e.g. 0.005) for higher quality."""
     cull_scale_thresh: float = 0.5
     """threshold of scale for culling huge gaussians"""
@@ -228,19 +232,35 @@ class SplatfactoModelConfig(ModelConfig):
     gird_shape: Tuple[int, int, int] = (16, 16, 8)
     """Shape of the bilateral grid (X, Y, W)"""
 
-    color_corrected_metrics: bool = False
+    color_corrected_metrics: bool = True
     """If True, apply color correction to the rendered images before computing the metrics."""
 
     normal_consistency_loss: bool = False
     """If True, use normal consistency loss"""
     normal_consistency_lambda: float = 0.05
-    """"""
+    """Weight for normal consistency loss"""
     enable_mcmc: bool = False
     """"""
     cap_max: int = 1_000_000
     """Maximum number of GSs."""
     noise_lr: float = 5e5
     """MCMC samping noise learning rate"""
+    use_compression: bool = False
+    """If True, use compression to reduce the number of gaussians"""
+    compression_interval: int = 1000
+    """Interval to compress the gaussians"""
+    compression_dir: str = "compressed_gaussians"
+    """Directory to store the compressed gaussians"""
+    use_2dgs: bool = False
+    """If True, use 2DGS to render the image"""
+    normal_lambda: float = 5e-2
+    """Weight for normal loss """
+    normal_start_iter: int = 7_000
+    """Iteration to start normal consistency regulerization"""
+    dist_lambda: float = 1e-2
+    """Weight for distortion loss"""
+    dist_start_iter: int = 3_000
+    """Iteration to start distortion loss regulerization"""
 
 class SplatfactoModel(Model):
     """Nerfstudio's implementation of Gaussian Splatting
@@ -263,7 +283,11 @@ class SplatfactoModel(Model):
         # use_scale_regularization and use_mesh_initialization can't be able at the same time
         # Now just simply set use_scale_regularization to false
         # if self.config.use_scale_regularization and self.config.use_mesh_initialization:        #     raise ValueError("use_scale_regularization and use_mesh_initialization can't be able at the same time")
-        
+        if self.config.use_compression:
+            self.compression_method = PngCompression()
+            self.compression_interval = self.config.compression_interval  # Compress every 1000 steps
+            self.compression_dir = os.path.join(self.config.compression_dir, "compressed_gaussians")
+            os.makedirs(self.compression_dir, exist_ok=True)
 
 
     def populate_modules(self):
@@ -549,6 +573,37 @@ class SplatfactoModel(Model):
         self.step = step
         self.optimizers = optimizers.optimizers
 
+        if self.config.use_compression and step % self.compression_interval == 0:
+            self.run_compression(step)
+
+    def run_compression(self, step):
+        splats = {
+            "means": self.means.data,
+            "scales": self.scales.data,
+            "quats": self.quats.data,
+            "opacities": self.opacities.data,
+            "sh0": self.features_dc.data,
+            "shN": self.features_rest.data,
+        }
+        
+        compress_dir = os.path.join(self.compression_dir, f"step_{step}")
+        os.makedirs(compress_dir, exist_ok=True)
+        
+        self.compression_method.compress(compress_dir, splats)
+        
+        # Optionally, you can load the compressed data back
+        compressed_splats = self.compression_method.decompress(compress_dir)
+        self.update_gaussian_params(compressed_splats)
+
+    def update_gaussian_params(self, compressed_splats):
+        with torch.no_grad():
+            self.gauss_params["means"].data = compressed_splats["means"]
+            self.gauss_params["scales"].data = compressed_splats["scales"]
+            self.gauss_params["quats"].data = compressed_splats["quats"]
+            self.gauss_params["opacities"].data = compressed_splats["opacities"]
+            self.gauss_params["features_dc"].data = compressed_splats["sh0"]
+            self.gauss_params["features_rest"].data = compressed_splats["shN"]
+
     def get_gaussian_param_groups(self) -> Dict[str, List[Parameter]]:
         # Here we explicitly use the means, scales as parameters so that the user can override this function and
         # specify more if they want to add more optimizable params to gaussians.
@@ -694,28 +749,84 @@ class SplatfactoModel(Model):
 
         rade = self.config.normal_consistency_loss and (self.step>=5000)
          # render, alpha, info = rasterization(
-        render, alpha, expected_depths, median_depths, render_normals, self.info = rasterization(
-            means=means_crop,
-            quats=quats_crop / quats_crop.norm(dim=-1, keepdim=True),
-            scales=torch.exp(scales_crop),
-            opacities=torch.sigmoid(opacities_crop).squeeze(-1),
-            colors=colors_crop,
-            viewmats=viewmat,  # [1, 4, 4]
-            Ks=K,  # [1, 3, 3]
-            width=W,
-            height=H,
-            packed=False,
-            near_plane=0.01,
-            far_plane=1e10,
-            render_mode=render_mode,
-            sh_degree=sh_degree_to_use,
-            sparse_grad=False,
-            absgrad=self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False,
-            rasterize_mode=self.config.rasterize_mode,
-            require_rade=rade
-            # set some threshold to disregrad small gaussians for faster rendering.
-            # radius_clip=3.0,
-        )
+        normal_loss = torch.tensor(0.0).to(self.device)
+        if self.config.use_2dgs:
+            (
+                render,
+                alpha,
+                render_normals,
+                normals_from_depth,
+                render_distort,
+                render_median,
+                self.info,
+            ) = rasterization_2dgs(
+                means=means_crop,
+                quats=quats_crop / quats_crop.norm(dim=-1, keepdim=True),
+                scales=torch.exp(scales_crop),
+                opacities=torch.sigmoid(opacities_crop).squeeze(-1),
+                colors=colors_crop,
+                viewmats=viewmat,  # [C, 4, 4]
+                Ks=K,  # [C, 3, 3]
+                width=W,
+                height=H,
+                packed=False,
+                absgrad=self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False,
+                sparse_grad=False,
+                sh_degree=sh_degree_to_use,
+                render_mode = "RGB+ED"
+            )
+        else:
+            (
+                render,
+                alpha,
+                expected_depths,
+                median_depths,
+                render_normals,
+                self.info,
+            ) = rasterization(
+                    means=means_crop,
+                quats=quats_crop / quats_crop.norm(dim=-1, keepdim=True),
+                scales=torch.exp(scales_crop),
+                opacities=torch.sigmoid(opacities_crop).squeeze(-1),
+                colors=colors_crop,
+                viewmats=viewmat,  # [1, 4, 4]
+                Ks=K,  # [1, 3, 3]
+                width=W,
+                height=H,
+                packed=False,
+                near_plane=0.01,
+                far_plane=1e10,
+                render_mode=render_mode,
+                sh_degree=sh_degree_to_use,
+                sparse_grad=False,
+                absgrad=self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False,
+                rasterize_mode=self.config.rasterize_mode,
+                require_rade=rade
+                # set some threshold to disregrad small gaussians for faster rendering.
+                # radius_clip=3.0,
+            )
+            if expected_depths is not None:
+                grid_x, grid_y = torch.meshgrid(torch.arange(W)+0.5, torch.arange(H)+0.5, indexing='xy')
+                points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=-1).reshape(1, -1, 3).float().cuda()
+                rays_d = points @ torch.linalg.inv(K.transpose(2,1)) # 1, M, 3
+                points_e = expected_depths.reshape(K.shape[0],-1,1) * rays_d
+                points_m = median_depths.reshape(K.shape[0],-1,1) * rays_d
+                points_e = points_e.reshape_as(render_normals)
+                points_m = points_m.reshape_as(render_normals)
+                normal_map_e = torch.zeros_like(points_e)
+                dx = points_e[...,2:, 1:-1,:] - points_e[...,:-2, 1:-1,:]
+                dy = points_e[...,1:-1, 2:,:] - points_e[...,1:-1, :-2,:]
+                normal_map = torch.nn.functional.normalize(torch.cross(dx, dy, dim=-1), dim=-1)
+                normal_map_e[...,1:-1, 1:-1, :] = normal_map
+                normal_map_m = torch.zeros_like(points_m)
+                dx = points_m[...,2:, 1:-1,:] - points_m[...,:-2, 1:-1,:]
+                dy = points_m[...,1:-1, 2:,:] - points_m[...,1:-1, :-2,:]
+                normal_map = torch.nn.functional.normalize(torch.cross(dx, dy, dim=-1), dim=-1)
+                normal_map_m[...,1:-1, 1:-1, :] = normal_map
+                normal_error_map_e = (1 - (render_normals * normal_map_e).sum(dim=-1))
+                normal_error_map_m = (1 - (render_normals * normal_map_m).sum(dim=-1))
+                normal_loss = self.config.normal_consistency_lambda * (0.4 * normal_error_map_e.mean() + 0.6 * normal_error_map_m.mean())
+                normal_loss = normal_loss.to(self.device)
 
         if self.training:
             self.strategy.step_pre_backward(
@@ -743,37 +854,37 @@ class SplatfactoModel(Model):
         if background.shape[0] == 3 and not self.training:
             background = background.expand(H, W, 3)
 
-        if expected_depths is not None:
-            grid_x, grid_y = torch.meshgrid(torch.arange(W)+0.5, torch.arange(H)+0.5, indexing='xy')
-            points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=-1).reshape(1, -1, 3).float().cuda()
-            rays_d = points @ torch.linalg.inv(K.transpose(2,1)) # 1, M, 3
-            points_e = expected_depths.reshape(K.shape[0],-1,1) * rays_d
-            points_m = median_depths.reshape(K.shape[0],-1,1) * rays_d
-            points_e = points_e.reshape_as(render_normals)
-            points_m = points_m.reshape_as(render_normals)
-            normal_map_e = torch.zeros_like(points_e)
-            dx = points_e[...,2:, 1:-1,:] - points_e[...,:-2, 1:-1,:]
-            dy = points_e[...,1:-1, 2:,:] - points_e[...,1:-1, :-2,:]
-            normal_map = torch.nn.functional.normalize(torch.cross(dx, dy, dim=-1), dim=-1)
-            normal_map_e[...,1:-1, 1:-1, :] = normal_map
-            normal_map_m = torch.zeros_like(points_m)
-            dx = points_m[...,2:, 1:-1,:] - points_m[...,:-2, 1:-1,:]
-            dy = points_m[...,1:-1, 2:,:] - points_m[...,1:-1, :-2,:]
-            normal_map = torch.nn.functional.normalize(torch.cross(dx, dy, dim=-1), dim=-1)
-            normal_map_m[...,1:-1, 1:-1, :] = normal_map
-            normal_error_map_e = (1 - (render_normals * normal_map_e).sum(dim=-1))
-            normal_error_map_m = (1 - (render_normals * normal_map_m).sum(dim=-1))
-            normal_loss = self.config.normal_consistency_lambda * (0.4 * normal_error_map_e.mean() + 0.6 * normal_error_map_m.mean())
-            normal_loss = normal_loss.to(self.device)
-        else:
-            normal_loss = torch.tensor(0.0).to(self.device)
+        planar_normal_loss = torch.tensor(0.0).to(self.device)
+        dist_loss = torch.tensor(0.0).to(self.device)
+        if self.config.use_2dgs:
+            if self.step > self.config.normal_start_iter:
+                curr_normal_lambda = self.config.normal_lambda
+            else:
+                curr_normal_lambda = 0.0
+                # normal consistency loss
+            render_normals = render_normals.squeeze(0).permute((2, 0, 1))
+            normals_from_depth *= alpha.squeeze(0).detach()
+            if len(normals_from_depth.shape) == 4:
+                normals_from_depth = normals_from_depth.squeeze(0)
+            normals_from_depth = normals_from_depth.permute((2, 0, 1))
+            normal_error = (1 - (render_normals * normals_from_depth).sum(dim=0))[None]
+            planar_normal_loss = curr_normal_lambda * normal_error.mean()
+            if self.step > self.config.dist_start_iter:
+                curr_dist_lambda = self.config.dist_lambda
+            else:
+                curr_dist_lambda = 0.0
+            dist_loss = render_distort.mean() * curr_dist_lambda
 
+        
+        
         return {
             "rgb": rgb.squeeze(0),  # type: ignore
             "depth": depth_im,  # type: ignore
             "accumulation": alpha.squeeze(0),  # type: ignore
             "background": background,  # type: ignore
             "normal_loss": normal_loss,
+            "planar_normal_loss": planar_normal_loss,
+            "dist_loss": dist_loss,
         }  # type: ignore
 
     def get_gt_img(self, image: torch.Tensor):
@@ -843,7 +954,9 @@ class SplatfactoModel(Model):
             
 
         Ll1 = torch.abs(gt_img - pred_img).mean()
-        simloss = 1 - self.ssim(gt_img.permute(2, 0, 1)[None, ...], pred_img.permute(2, 0, 1)[None, ...])
+        
+        ssim_loss = 1 - fused_ssim(gt_img.permute(2, 0, 1)[None, ...], pred_img.permute(2, 0, 1)[None, ...])
+        # simloss = 1 - self.ssim(gt_img.permute(2, 0, 1)[None, ...], pred_img.permute(2, 0, 1)[None, ...])
         if self.config.use_scale_regularization and self.step % 10 == 0:
             scale_exp = torch.exp(self.scales)
             scale_reg = (
@@ -859,7 +972,7 @@ class SplatfactoModel(Model):
         
 
         loss_dict = {
-            "main_loss": (1 - self.config.ssim_lambda) * Ll1 + self.config.ssim_lambda * simloss,
+            "main_loss": (1 - self.config.ssim_lambda) * Ll1 + self.config.ssim_lambda * ssim_loss,
             "scale_reg": scale_reg,
         }
 
@@ -870,6 +983,9 @@ class SplatfactoModel(Model):
                 loss_dict["tv_loss"] = 10 * total_variation_loss(self.bil_grids.grids)
             if self.config.normal_consistency_loss:
                 loss_dict["normal_loss"] = outputs["normal_loss"]
+            if self.config.use_2dgs:
+                loss_dict["dist_loss"] = outputs["dist_loss"]
+                loss_dict["planar_normal_loss"] = outputs["planar_normal_loss"]
         # print("loss_dict", loss_dict)
         return loss_dict
 
