@@ -62,8 +62,6 @@ def get_lens_distortion_point(point, lookup_table, distortion_center, width, hei
                               distortion_center[1] + (point[1] - distortion_center[1]) * (1.0 + magnification)])
     return mapped_point
 
-
-
 def remove_black_pixels(lookup_table, distortion_center, width, height):
     roi_min_x = 0
     roi_min_y = 0
