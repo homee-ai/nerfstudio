@@ -4,6 +4,17 @@ import json
 import os
 import argparse
 from concurrent.futures import ProcessPoolExecutor
+import math
+
+global undistort_data
+undistort_data = None
+
+class UndistortData:
+    def __init__(self, crop_left, crop_top, crop_width, crop_height):
+        self.crop_left = crop_left
+        self.crop_top = crop_top
+        self.crop_width = crop_width
+        self.crop_height = crop_height
 
 class Data:
     def __init__(self, intrinsic_matrix, intrinsic_matrix_reference_dimensions, lens_distortion_center, inverse_lens_distortion_lookup_table, lens_distortion_lookup_table):
@@ -14,13 +25,9 @@ class Data:
         self.lens_distortion_lookup_table = lens_distortion_lookup_table
 
 def readCalibrationJson(path):
-    # Open the JSON file
     with open(path, "r") as f:
-        # Read the contents of the file
         data = json.load(f)
 
-    # Access specific data from the dictionary
-    pixel_size = data["calibration_data"]["pixel_size"]
     intrinsic_matrix = data["calibration_data"]["intrinsic_matrix"]
     intrinsic_matrix_reference_dimensions = data["calibration_data"]["intrinsic_matrix_reference_dimensions"]
     lens_distortion_center = data["calibration_data"]["lens_distortion_center"]
@@ -29,11 +36,6 @@ def readCalibrationJson(path):
     lut = data["calibration_data"]["lens_distortion_lookup_table"]
 
     data = Data(intrinsic_matrix, intrinsic_matrix_reference_dimensions, lens_distortion_center, inverse_lut, lut)
-    # # Print some of the data for verification
-    # print(f"Pixel size: {pixel_size}")
-    # print(f"Intrinsic matrix:\n {intrinsic_matrix}")
-    # print(f"Lens distortion center: {lens_distortion_center}")
-    # print(f"Inverse lookup table length: {len(inverse_lut)}")
     return data
 
 def get_lens_distortion_point(point, lookup_table, distortion_center, image_size):
@@ -55,15 +57,59 @@ def get_lens_distortion_point(point, lookup_table, distortion_center, image_size
                               distortion_center[1] + (point[1] - distortion_center[1]) * (1.0 + magnification)])
     return mapped_point
 
-def rectify_single_image(image_path, output_path, distortion_param_json_path, crop_x, crop_y):
+def remove_black_pixels(lookup_table, distortion_center, width, height):
+    roi_min_x = 0
+    roi_min_y = 0
+    roi_max_x = width
+    roi_max_y = height
+
+    # Find the boundary of the undistorted image
+    left_max_x = float('-inf')
+    right_min_x = float('inf')
+
+    for y in range(roi_min_y, roi_max_y):
+        p1 = np.array([0.5, y + 0.5])
+        p1_undistorted = get_lens_distortion_point(p1, lookup_table, distortion_center, [width, height])
+        left_max_x = max(left_max_x, p1_undistorted[0])
+
+        p2 = np.array([width - 0.5, y + 0.5])
+        p2_undistorted = get_lens_distortion_point(p2, lookup_table, distortion_center, [width, height])
+        right_min_x = min(right_min_x, p2_undistorted[0])
+
+    top_max_y = float('-inf')
+    bottom_min_y = float('inf')
+
+    for x in range(roi_min_x, roi_max_x):
+        p1 = np.array([x + 0.5, 0.5])
+        p1_undistorted = get_lens_distortion_point(p1, lookup_table, distortion_center, [width, height])
+        top_max_y = max(top_max_y, p1_undistorted[1])
+
+        p2 = np.array([x + 0.5, height - 0.5])
+        p2_undistorted = get_lens_distortion_point(p2, lookup_table, distortion_center, [width, height])
+        bottom_min_y = min(bottom_min_y, p2_undistorted[1])
+
+    # use ceil for left and top, floor for right and bottom to avoid maximum black pixels
+    left_max_x = math.ceil(left_max_x)
+    right_min_x = math.floor(right_min_x)
+    top_max_y = math.ceil(top_max_y)
+    bottom_min_y = math.floor(bottom_min_y)
+
+    new_width = right_min_x - left_max_x
+    new_height = bottom_min_y - top_max_y
+
+    return left_max_x, top_max_y, new_width, new_height
+
+def rectify_single_image(image_path, output_path, distortion_param_json_path):
     """Processes a single image with distortion correction."""
+    global undistort_data
+    
     image = cv2.imread(image_path)
     height, width, channel = image.shape
     rectified_image = np.zeros((height, width, channel), dtype=image.dtype)
 
     # read calibration data
     data = readCalibrationJson(distortion_param_json_path)
-    lookup_table = data.inverse_lens_distortion_lookup_table# data.lens_distortion_lookup_table
+    lookup_table = data.inverse_lens_distortion_lookup_table
     distortion_center = data.lens_distortion_center
     reference_dimensions = data.intrinsic_matrix_reference_dimensions
     ratio_x = width / reference_dimensions[0]
@@ -82,23 +128,32 @@ def rectify_single_image(image_path, output_path, distortion_param_json_path, cr
 
             rectified_image[j, i] = image[int(original_index[1]), int(original_index[0])]
 
-    # crop image
-    u_shift = crop_x
-    v_shift = crop_y
-    crop_image = rectified_image[v_shift:height-v_shift, u_shift:width-u_shift]
+    if undistort_data is None:
+        print("Finding the boundary of the undistorted image")
+        lookup_table = np.array(data.lens_distortion_lookup_table, dtype=np.float32)
+        distortion_center = np.array(distortion_center, dtype=np.float32)
+        crop_left, crop_top, crop_width, crop_height = remove_black_pixels(lookup_table, distortion_center, width, height)
+        undistort_data = UndistortData(crop_left, crop_top, crop_width, crop_height)
+    else:
+        print("Using the provided boundary of the undistorted image")
+        crop_left = undistort_data.crop_left
+        crop_top = undistort_data.crop_top
+        crop_width = undistort_data.crop_width
+        crop_height = undistort_data.crop_height
+
+    crop_image = rectified_image[crop_top:crop_top+crop_height, crop_left:crop_left+crop_width]
     cv2.imwrite(output_path, crop_image)
     print(f"finish process {image_path}")
 
-def rectify_all_image(image_folder_path, distortion_param_json_path, output_image_folder_path, crop_x, crop_y):
+def rectify_all_image(image_folder_path, distortion_param_json_path, output_image_folder_path):
     with ProcessPoolExecutor() as executor:
         for filename in os.listdir(image_folder_path):
             image_path = os.path.join(image_folder_path, filename)
             output_path = os.path.join(output_image_folder_path, filename)
             executor.submit(
-                rectify_single_image, image_path, output_path, distortion_param_json_path, crop_x, crop_y)
+                rectify_single_image, image_path, output_path, distortion_param_json_path)
 
-
-def rectified_intrinsic(input_path, output_path, crop_x, crop_y):
+def rectified_intrinsic(input_path, output_path):
     num_intrinsic = 0
     with open(input_path, "r") as fid:
         while True:
@@ -126,11 +181,11 @@ def rectified_intrinsic(input_path, output_path, crop_x, crop_y):
                 elems = line.split()
                 camera_id = int(elems[0])
                 model = elems[1]
-                width = int(elems[2])-crop_x*2
-                height = int(elems[3])-crop_y*2
+                width = undistort_data.crop_width
+                height = undistort_data.crop_height
                 params = np.array(tuple(map(float, elems[4:])))
-                params[2] = params[2] - crop_x
-                params[3] = params[3] - crop_y
+                params[2] = params[2] - undistort_data.crop_left
+                params[3] = params[3] - undistort_data.crop_top
 
                 camera_ids[count] = camera_id
                 widths[count] = width
@@ -144,32 +199,26 @@ def rectified_intrinsic(input_path, output_path, crop_x, crop_y):
             line = str(int(camera_ids[i])) + " " + "PINHOLE" + " " + str(int(widths[i]))+ " " + str(int(heights[i]))+ " " + str(paramss[i][0]) + " " + str(paramss[i][1])+ " " + str(paramss[i][2])+ " " +  str(paramss[i][3])
             f.write(line  + "\n")
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="undistort ARKit image using distortion params get from AVfoundation")
     parser.add_argument("--input_base", type=str)
-    parser.add_argument("--crop_x", type=int, default=10)
-    parser.add_argument("--crop_y", type=int, default=8)
-
 
     args = parser.parse_args()
     base_folder_path = args.input_base
     input_image_folder_path = base_folder_path + "/distort_images"
     distortion_param_json_path = base_folder_path + "/sparse/0/calibration.json"
     output_image_folder_path = base_folder_path + "/post/images/"
-    crop_x = args.crop_x
-    crop_y = args.crop_y
     input_camera = base_folder_path + "/sparse/0/distort_cameras.txt"
-    output_camera = base_folder_path + "/post/sparse/online/cameras.txt"
-
 
     if not os.path.exists(output_image_folder_path):
         os.makedirs(output_image_folder_path)
 
-    rectify_all_image(input_image_folder_path, distortion_param_json_path, output_image_folder_path, crop_x, crop_y)
-    rectified_intrinsic(input_camera, output_camera, crop_x, crop_y)
-    output_camera = base_folder_path + "/post/sparse/online_loop/cameras.txt"
-    rectified_intrinsic(input_camera, output_camera, crop_x, crop_y)
-
-
+    rectify_all_image(input_image_folder_path, distortion_param_json_path, output_image_folder_path)
     
+    output_cameras = [
+        base_folder_path + "/post/sparse/online/cameras.txt",
+        base_folder_path + "/post/sparse/online_loop/cameras.txt"
+    ]
+
+    for output_camera in output_cameras:
+        rectified_intrinsic(input_camera, output_camera)
