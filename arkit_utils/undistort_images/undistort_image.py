@@ -18,7 +18,7 @@ global undistort_data
 undistort_data = None
 
 class UndistortData:
-    def __init__(self, crop_left, crop_top, crop_width, crop_height):
+    def __init__(self, crop_left: int, crop_top: int, crop_width: int, crop_height: int):
         self.crop_left = crop_left
         self.crop_top = crop_top
         self.crop_width = crop_width
