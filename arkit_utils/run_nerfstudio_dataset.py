@@ -29,13 +29,17 @@ def main(args):
         '--max-num-iterations 50000',
         '--pipeline.model.use-mesh-initialization True',
         '--pipeline.model.rasterize-mode antialiased',
-        '--pipeline.model.camera-optimizer.mode SO3xR3',
+        '--pipeline.model.use-scale-regularization False',
+        '--pipeline.model.camera-optimizer.mode off',
+        '--pipeline.model.use-bilateral-grid True',
         '--viewer.make-share-url True',
         'colmap',
         f'--colmap_path "colmap/{pose_method}/0"',
         '--auto_scale_poses False',
         '--center_method none',
         '--orientation_method none',
+        '--eval-mode fraction',
+        '--train-split-fraction 1.0',
     ]
 
     full_cmds = ' '.join(cmds)  

@@ -18,7 +18,10 @@ pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindi
 
 echo "======Phase 3: Installing HLOC======"
 git clone --recursive https://github.com/cvg/Hierarchical-Localization/
-python -m pip install -e Hierarchical-Localization
+pip uninstall -y pycolmap && \
+pip install pycolmap==0.4.0
+cd Hierarchical-Localization && git checkout v1.4 && pip install --no-cache-dir -e .
+cd ..
 
 echo "======Phase 4: Installing COLMAP dependencies======"
 sudo apt-get install \
@@ -48,7 +51,7 @@ git clone https://github.com/homee-ai/colmap.git
 cd colmap
 mkdir build
 cd build
-cmake .. -GNinja
+cmake .. -GNinja -DCMAKE_CUDA_ARCHITECTURES=89
 ninja
 sudo ninja install
 

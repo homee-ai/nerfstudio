@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -eux
+set -eu
 
 # sh scripts/eval.sh arg_1 arg_2
 # arg_1: config path. e.g. outputs/farglory95_colmap/splatfacto-w/2024-07-12_013146/config.yml
@@ -30,7 +30,21 @@ RENDER_EVAL_PATH="$DIR/render/eval"
 #   "fps_std": 1.633920431137085
 
 # Run the evaluation with the specified config file and output path
-ns-eval --load-config "$1" --output-path "$OUTPUT_PATH" --render-output-path "$RENDER_EVAL_PATH"
+echo "Starting evaluation..."
+if ! ns-eval --load-config "$1" --output-path "$OUTPUT_PATH" --render-output-path "$RENDER_EVAL_PATH"; then
+    echo "Evaluation failed. Check the error message above."
+    exit 1
+fi
+
+# Check if the output file was created and is not empty
+if [ ! -s "$OUTPUT_PATH" ]; then
+    echo "Error: Output file is empty or was not created at $OUTPUT_PATH"
+    echo "Contents of the render directory:"
+    ls -l "$RENDER_EVAL_PATH"
+    exit 1
+fi
+
+echo "Evaluation completed successfully. Results saved to $OUTPUT_PATH"
 
 # Render all images in the specified dataset split
-ns-render dataset --load-config "$1" --output-path "$RENDER_PATH" --split "$2"
+# ns-render dataset --load-config "$1" --output-path "$RENDER_PATH" --split "$2"
