@@ -210,6 +210,11 @@ def main(args: argparse.Namespace) -> None:
     arkit_dst = colmap_dir / "arkit" / "0"
     copy_directory(arkit_src, arkit_dst)
     
+    # Copy scene.obj to ARKit folder if it exists
+    scene_obj_src = root_path / "scene.obj"
+    if os.path.exists(scene_obj_src):
+        shutil.copy2(scene_obj_src, arkit_dst / "scene.obj")
+    
     # Align and visualize poses for each method
     methods: List[str] = ["lightglue", "loftr", "colmap", "glomap"]
 
@@ -220,6 +225,10 @@ def main(args: argparse.Namespace) -> None:
             method_src = method_src / "0"
         method_dst = colmap_dir / method / "0"
         copy_directory(method_src, method_dst)
+        
+        # Copy scene.obj to method folder
+        if os.path.exists(scene_obj_src) and os.path.exists(method_dst):
+            shutil.copy2(scene_obj_src, method_dst / "scene.obj")
 
     # Copy images
     images_src = root_path / "post" / "images"
