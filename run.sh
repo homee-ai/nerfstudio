@@ -52,7 +52,7 @@ if [ "$skip_preprocess" = false ]; then
   remove_and_create_folder "${input_base_path}/post/sparse/online_loop"
 
   echo "1. Undistort image using AVFoundation calibration data"
-  python arkit_utils/undistort_images/undistort_image_cuda.py --input_base ${input_base_path}
+  python arkit_utils/undistort_images/undistort_image.py --input_base ${input_base_path}
 
   echo "2. Transform ARKit mesh to point3D"
   python arkit_utils/mesh_to_points3D/arkitobj2point3D.py --input_base_path ${input_base_path}
