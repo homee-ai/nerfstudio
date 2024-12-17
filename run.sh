@@ -3,7 +3,7 @@ set -e
 
 # Validate the input arguments
 if [ $# -lt 1 ]; then
-  echo "Usage: $0 <input_base_path> [<method1> <method2> ...] [--skip-preprocess]"
+  echo "Usage: $0 <input_base_path> [<method1> <method2> ...] [--icp] [--skip-preprocess]"
   echo "Available methods: arkit colmap, loftr, lightglue, glomap"
   echo "Default method: arkit"
   exit 1
@@ -12,11 +12,16 @@ fi
 input_base_path=$1
 shift
 methods=()
+use_icp=false
 skip_preprocess=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
+    --icp)
+      use_icp=true
+      shift
+      ;;
     --skip-preprocess)
       skip_preprocess=true
       shift
@@ -33,9 +38,12 @@ if [ ${#methods[@]} -eq 0 ]; then
   methods=("arkit")
 fi
 
-echo "input_base_path: ${input_base_path}"
-echo "methods: ${methods[@]}"
-echo "skip_preprocess: ${skip_preprocess}"
+# Print configuration
+echo "Configuration:"
+echo "  input_base_path: ${input_base_path}"
+echo "  methods: ${methods[@]}"
+echo "  use_icp: ${use_icp}"
+echo "  skip_preprocess: ${skip_preprocess}"
 
 remove_and_create_folder() {
   if [ -d "$1" ]; then
@@ -66,6 +74,18 @@ if [ "$skip_preprocess" = false ]; then
     python arkit_utils/pose_optimization/optimize_pose.py --input_database_path ${input_base_path} --methods "${methods[@]}"
   else
     echo "Skipping pose optimization"
+  fi
+
+  if [ "$use_icp" = true ]; then
+    echo "4.5 ICP registration"
+    for method in "${methods[@]}"; do
+      if [ "$method" != "arkit" ]; then
+        echo "Running ICP for method: ${method}"
+        python arkit_utils/icp.py \
+          --base_dir "${input_base_path}/post/sparse/offline/${method}/final" \
+          --output_dir "${input_base_path}/post/sparse/offline/${method}_ICP/final"
+      fi
+    done
   fi
 
   echo "5. Prepare dataset for nerfstudio"
