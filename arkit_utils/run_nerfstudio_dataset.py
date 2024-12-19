@@ -22,17 +22,20 @@ def main(args):
     parent_name = root_path.parent.name
     output_root = root_path.parent / f"{parent_name}_nerfstudio"
     pose_method = args.method
+    if args.use_icp:
+        pose_method = f"{pose_method}_ICP"
 
     cmds = [
         'ns-train splatfacto ',
         f'--data {output_root} ',
-        '--max-num-iterations 50000',
+        '--max-num-iterations 30000',
         '--pipeline.model.use-mesh-initialization True',
         '--pipeline.model.rasterize-mode antialiased',
         '--pipeline.model.use-scale-regularization False',
-        '--pipeline.model.camera-optimizer.mode off',
+        '--pipeline.model.camera-optimizer.mode SO3xR3',
         '--pipeline.model.use-bilateral-grid True',
         '--viewer.make-share-url True',
+        '--vis viewer+tensorboard',
         'colmap',
         f'--colmap_path "colmap/{pose_method}/0"',
         '--auto_scale_poses False',
@@ -50,6 +53,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert ARKit 3DGS output for nerfstudio training.")
     parser.add_argument("--input_path", help="Path to the root directory of run_arkit_3dgs.sh output")
     parser.add_argument("--method", type=str,  default=['arkit'], help="Choose pose optimization methods")
+    parser.add_argument("--use_icp", type=bool, default=False, help="use ICP for mesh and point3D")
     args = parser.parse_args()
     
     main(args)
