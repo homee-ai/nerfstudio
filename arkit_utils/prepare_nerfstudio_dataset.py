@@ -274,6 +274,16 @@ def main(args: argparse.Namespace) -> None:
     print(f"Conversion completed successfully. Output directory: {output_root}")
     print(f"Mean translation differences saved to: {output_root}/alignment_eval.txt")
 
+    # Add ICP methods
+    for method in methods:
+        if method != "arkit":
+            icp_method = f"{method}_ICP"
+            icp_src = root_path / "post" / "sparse" / "offline" / f"{method}_ICP" / "final"
+            if os.path.exists(icp_src):
+                icp_dst = colmap_dir / icp_method / "0"
+                copy_directory(icp_src, icp_dst)
+                methods.append(icp_method)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert ARKit 3DGS output for nerfstudio training.")
     parser.add_argument("--input_path", help="Path to the root directory of run_arkit_3dgs.sh output")
