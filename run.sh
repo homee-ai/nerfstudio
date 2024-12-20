@@ -3,7 +3,7 @@ set -e
 
 # Validate the input arguments
 if [ $# -lt 1 ]; then
-  echo "Usage: $0 <input_base_path> [<method1> <method2> ...] [--skip-preprocess]"
+  echo "Usage: $0 <input_base_path> [<method1> <method2> ...] [--icp] [--skip-preprocess]"
   echo "Available methods: arkit colmap, loftr, lightglue, glomap"
   echo "Default method: arkit"
   exit 1
@@ -12,11 +12,16 @@ fi
 input_base_path=$1
 shift
 methods=()
+use_icp=false
 skip_preprocess=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
+    --icp)
+      use_icp=true
+      shift
+      ;;
     --skip-preprocess)
       skip_preprocess=true
       shift
@@ -33,9 +38,12 @@ if [ ${#methods[@]} -eq 0 ]; then
   methods=("arkit")
 fi
 
-echo "input_base_path: ${input_base_path}"
-echo "methods: ${methods[@]}"
-echo "skip_preprocess: ${skip_preprocess}"
+# Print configuration
+echo "Configuration:"
+echo "  input_base_path: ${input_base_path}"
+echo "  methods: ${methods[@]}"
+echo "  use_icp: ${use_icp}"
+echo "  skip_preprocess: ${skip_preprocess}"
 
 remove_and_create_folder() {
   if [ -d "$1" ]; then
@@ -55,6 +63,11 @@ if [ "$skip_preprocess" = false ]; then
   python arkit_utils/undistort_images/undistort_image.py --input_base ${input_base_path}
 
   echo "2. Transform ARKit mesh to point3D"
+  if [ ! -f "${input_base_path}/../scene.obj" ]; then
+    echo "Error: scene.obj not found at ${input_base_path}/../scene.obj"
+    exit 1
+  fi
+  cp ${input_base_path}/../scene.obj ${input_base_path}
   python arkit_utils/mesh_to_points3D/arkitobj2point3D.py --input_base_path ${input_base_path}
 
   echo "3. Transform ARKit pose to COLMAP coordinate"
@@ -68,6 +81,18 @@ if [ "$skip_preprocess" = false ]; then
     echo "Skipping pose optimization"
   fi
 
+  if [ "$use_icp" = true ]; then
+    echo "4.5 ICP registration"
+    for method in "${methods[@]}"; do
+      if [ "$method" != "arkit" ]; then
+        echo "Running ICP for method: ${method}"
+        python arkit_utils/icp.py \
+          --base_dir "${input_base_path}/post/sparse/offline/${method}/final" \
+          --output_dir "${input_base_path}/post/sparse/offline/${method}_ICP/final"
+      fi
+    done
+  fi
+
   echo "5. Prepare dataset for nerfstudio"
   python arkit_utils/prepare_nerfstudio_dataset.py --input_path ${input_base_path}
 
@@ -75,4 +100,4 @@ if [ "$skip_preprocess" = false ]; then
 fi
 
 echo "6. Start training nerfstudio"
-python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} --method "${methods[@]}"
+python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} --method "${methods[@]}" --use_icp ${use_icp}
