@@ -63,6 +63,10 @@ if [ "$skip_preprocess" = false ]; then
   python arkit_utils/undistort_images/undistort_image.py --input_base ${input_base_path}
 
   echo "2. Transform ARKit mesh to point3D"
+  if [ ! -f "${input_base_path}/../scene.obj" ]; then
+    echo "Error: scene.obj not found at ${input_base_path}/../scene.obj"
+    exit 1
+  fi
   cp ${input_base_path}/../scene.obj ${input_base_path}
   python arkit_utils/mesh_to_points3D/arkitobj2point3D.py --input_base_path ${input_base_path}
 
