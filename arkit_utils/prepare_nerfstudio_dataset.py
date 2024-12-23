@@ -282,6 +282,8 @@ def main(args: argparse.Namespace) -> None:
             if os.path.exists(icp_src):
                 icp_dst = colmap_dir / icp_method / "0"
                 copy_directory(icp_src, icp_dst)
+                # copy scene.obj to icp method folder
+                shutil.copy2(scene_obj_src, icp_dst / "scene.obj")
                 methods.append(icp_method)
 
 if __name__ == "__main__":
