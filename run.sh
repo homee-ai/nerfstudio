@@ -100,4 +100,8 @@ if [ "$skip_preprocess" = false ]; then
 fi
 
 echo "6. Start training nerfstudio"
-python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} --method "${methods[@]}" --use_icp ${use_icp}
+if [ "$use_icp" = true ]; then
+  python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} --method "${methods[@]}" --use_icp
+else
+  python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} --method "${methods[@]}"
+fi
