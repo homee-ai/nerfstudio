@@ -7,6 +7,8 @@ import logging
 import colorlog
 import time
 from tabulate import tabulate
+import h5py
+import cv2
 
 import pycolmap
 from hloc.utils.read_write_model import Camera, Image, Point3D, write_model, read_model
@@ -122,6 +124,63 @@ def read_arkit_cameras(dataset_base: str) -> Dict[int, Camera]:
     logger.info(f"Read {len(cameras)} ARKit camera parameters")
     return cameras
 
+def filter_matches_with_ransac(features_path: Path, matches_path: Path, threshold: float = 1.0) -> None:
+    """
+    Filter matches using RANSAC with Fundamental matrix estimation.
+
+    Args:
+        features_path (Path): Path to features file
+        matches_path (Path): Path to matches file
+        threshold (float, optional): RANSAC threshold in pixels. Defaults to 1.0.
+    """
+    logger.info("Filtering matches with RANSAC")
+    
+    # Load features and matches
+    features_dict = h5py.File(str(features_path), 'r')
+    matches_dict = h5py.File(str(matches_path), 'a')  # Open in append mode to modify
+
+    # Process each image pair
+    for name0 in matches_dict.keys():
+        group = matches_dict[name0]
+        for name1 in group.keys():
+            # Get keypoints
+            kpts0 = features_dict[name0]['keypoints'].__array__()
+            kpts1 = features_dict[name1]['keypoints'].__array__()
+            
+            # Get matches
+            matches = group[name1]['matches0'].__array__()
+            valid = matches > -1
+            
+            if not np.any(valid):
+                continue
+
+            # Extract matched keypoints
+            pts0 = kpts0[valid]
+            pts1 = kpts1[matches[valid]]
+
+            # Apply RANSAC
+            if len(pts0) >= 8:  # Minimum points needed for F-matrix estimation
+                F, mask = cv2.findFundamentalMat(
+                    pts0, pts1, 
+                    cv2.FM_RANSAC,
+                    ransacReprojThreshold=threshold,
+                    confidence=0.999
+                )
+                
+                if mask is not None:
+                    # Update matches by setting outliers to -1
+                    mask = mask.ravel().astype(bool)
+                    matches_idx = np.where(valid)[0]
+                    outliers = matches_idx[~mask]
+                    matches[outliers] = -1
+                    
+                    # Update the matches in the HDF5 file
+                    del group[name1]['matches0']
+                    group[name1]['matches0'] = matches
+
+    matches_dict.close()
+    features_dict.close()
+
 def setup_hloc(dataset_base: str, 
                colmap_arkit: Path, 
                methods: List[str], 
@@ -158,13 +217,35 @@ def setup_hloc(dataset_base: str,
             references = [str(p.relative_to(images)) for p in images.iterdir()]
             feature_conf = extract_features.confs['superpoint_inloc']
             logger.info(f"Extracting features for {method}")
+            feature_conf['model']['nms_radius'] = 4
+            feature_conf['model']['keypoint_threshold'] = 0.005
             extract_features.main(feature_conf, images, image_list=references, feature_path=features)
             
             matcher_conf = match_features.confs['superglue'] if method == 'colmap' else match_features.confs['superpoint+lightglue']
+            matcher_conf['model']['match_threshold'] = 0.2
+            matcher_conf['model']['weights'] = 'indoor'
             logger.info(f"Matching features for {method}")
             match_features.main(matcher_conf, sfm_pairs, features=features, matches=matches)
+            
+            # Add RANSAC filtering after matching
+            logger.info(f"Filtering matches with RANSAC for {method}")
+            # filter_matches_with_ransac(features, matches)
+        elif method == 'aliked':
+            references = [str(p.relative_to(images)) for p in images.iterdir()]
+            feature_conf = extract_features.confs['aliked-n16']
+            logger.info(f"Extracting features for {method}")
+            extract_features.main(feature_conf, images, image_list=references, feature_path=features)
+
+            matcher_conf = match_features.confs['aliked+lightglue']
+            logger.info(f"Matching features for {method}")
+            match_features.main(matcher_conf, sfm_pairs, features=features, matches=matches)
+            
+            # Add RANSAC filtering after matching
+            logger.info(f"Filtering matches with RANSAC for {method}")
+            filter_matches_with_ransac(features, matches)
         elif method == 'loftr':
             matcher_conf = match_dense.confs['loftr_aachen']
+            matcher_conf['model']['weights'] = 'indoor'
             logger.info(f"Performing dense matching for {method}")
             features, matches = match_dense.main(matcher_conf, sfm_pairs, images, outputs, max_kps=8192, overwrite=False)
 
@@ -290,7 +371,7 @@ def optimize_pose_glomap(outputs: Path, images: Path, colmap_input: Path, sfm_pa
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Optimize ARkit pose using various methods")
     parser.add_argument("--input_database_path", type=str, default="data/arkit_pose/study_room/arkit_undis")
-    parser.add_argument("--methods", nargs='+', type=str, choices=['colmap', 'loftr', 'lightglue', 'glomap'], default=['colmap'], help="Choose pose optimization methods")
+    parser.add_argument("--methods", nargs='+', type=str, choices=['colmap', 'loftr', 'lightglue', 'glomap', 'aliked'], default=['colmap'], help="Choose pose optimization methods")
     parser.add_argument("--BA_iterations", type=int, default=5)
 
     args = parser.parse_args()
