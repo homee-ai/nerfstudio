@@ -64,12 +64,6 @@ log_time() {
 # create output csv
 remove_and_create_folder "${input_base_path}/../output"
 output_csv="${input_base_path}/../output/duration.csv"
-# Create output CSV file if it doesn't exist
-if [ ! -f "${output_csv}" ]; then
-    touch "${output_csv}"
-fi
-
-
 echo "Step,Duration (secs)" > "${output_csv}"
 
 if [ "$skip_preprocess" = false ]; then
