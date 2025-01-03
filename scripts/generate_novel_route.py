@@ -1,6 +1,6 @@
 """ It reads cameras' extrinsic and generates a novel pose for rendering.
 
-python generate_novel_route.py \
+python scripts/generate_novel_route.py \
     --roomplan-json data/20241202_145754/20241202_145545_RoomPlan.json \
     --extrinsic-path data/20241202_145754/20241202_145754_nerfstudio/colmap/colmap/0/images.txt \
     --route-height 1500 \
@@ -19,7 +19,7 @@ import argparse
 import dataclasses
 import json
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -30,6 +30,8 @@ from scipy import interpolate
 from scipy.spatial import Delaunay
 from scipy.spatial.transform import Rotation
 from trimesh import Trimesh
+
+MM2METER = 1e-3
 
 
 @dataclasses.dataclass
@@ -247,7 +249,7 @@ def read_roomplan(roomplan_json: Path, targets: Dict[str, List]):
     return roomplan_targets
 
 
-def read_camera_extrinsic(extrinsic_path: Path) -> List[Dict]:
+def read_camera_extrinsic(extrinsic_path: Path) -> List[Dict[str, Any]]:
     # Read extrinsic.
     cameras_extrinsic = []
     with open(extrinsic_path, "r") as file:
@@ -278,7 +280,7 @@ def read_camera_extrinsic(extrinsic_path: Path) -> List[Dict]:
     return cameras_extrinsic
 
 
-def normalize(v):
+def normalize(v: np.ndarray) -> np.ndarray:
     """Normalize a vector."""
     return v / np.linalg.norm(v)
 
@@ -299,8 +301,9 @@ def gen_lookforward_rot(curr_position: np.ndarray, next_position: np.ndarray) ->
     return rotation_matrix
 
 
-def get_camera_center(quaternion: np.ndarray, translation: np.ndarray):
-    rotation = Rotation.from_quat(quaternion, scalar_first=True).as_matrix()
+def get_camera_center(quaternion: np.ndarray, translation: np.ndarray) -> np.ndarray:
+    quaternion = np.roll(quaternion, -1)  # (w, x, y, z) -> (x, y, z, w)
+    rotation = Rotation.from_quat(quaternion).as_matrix()  # (x, y, z, w)
     assert rotation.shape == (3, 3)
     return -1 * np.dot(rotation.T, translation)
 
@@ -385,7 +388,7 @@ def main(
             roomplan_targets["floor_0"]["trimesh"].vertices[:, 1], roomplan_targets["floor_0"]["trimesh"].vertices[0, 1]
         )
     )  # all vertices y coordinates must be the same
-    route_height = 1e-3 * relative_route_height + roomplan_targets["floor_0"]["trimesh"].vertices[0, 1]
+    route_height = relative_route_height * MM2METER + roomplan_targets["floor_0"]["trimesh"].vertices[0, 1]
     print("route_height: ", route_height)
 
     cameras_center = []
@@ -424,9 +427,9 @@ def main(
 
         lookforward_rot = gen_lookforward_rot(curr_pos, next_pos)
         c2w_lookforward_rot = lookforward_rot.T
-        quat = Rotation.from_matrix(c2w_lookforward_rot).as_quat(canonical=True, scalar_first=True)
-
-        keyframes.append(Keyframe.from_camera(pos=curr_pos, wxyz=quat, fov=fov, aspect=aspect_ratio))
+        quat = Rotation.from_matrix(c2w_lookforward_rot).as_quat()  # (x, y, z, w)
+        wxyz = np.roll(quat, 1)  # (x, y, z, w) -> (w, x, y, z)
+        keyframes.append(Keyframe.from_camera(pos=curr_pos, wxyz=wxyz, fov=fov, aspect=aspect_ratio))
 
     camerapath = CameraPath(framerate=video_fps, tension=0.5, fov=fov, transition_sec=transition_sec)
     for keyframe in keyframes:
@@ -468,7 +471,7 @@ def get_args():
     )
     parser.add_argument("--extrinsic-path", type=Path, required=True)
     parser.add_argument("--camera-path-json", type=Path, required=True)
-    parser.add_argument("--route-height", type=int, required=True)  # unit: millimeter
+    parser.add_argument("--route-height", type=int, required=True, help="Route height in millimeters.")
     parser.add_argument("--training-view-sampling-rate", type=int, required=True)
     parser.add_argument("--fov", type=float, default=75)
     parser.add_argument("--aspect-ratio", type=float, default=1.7777)
@@ -478,6 +481,9 @@ def get_args():
     parser.add_argument("--render-width", type=int, default=1920)
 
     args = parser.parse_args()
+
+    if args.route_height <= 0:
+        parser.error("Route height must be positive.")
 
     return args
 
