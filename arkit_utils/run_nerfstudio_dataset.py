@@ -55,6 +55,5 @@ if __name__ == "__main__":
     parser.add_argument("--method", type=str,  default=['arkit'], help="Choose pose optimization methods")
     parser.add_argument("--use_icp", action='store_true', default=False, help="use ICP for mesh and point3D")
     args = parser.parse_args()
-    print(args.use_icp)
     
     main(args)
