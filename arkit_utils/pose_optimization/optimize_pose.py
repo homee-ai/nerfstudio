@@ -254,7 +254,7 @@ def optimize_pose_colmap(outputs: Path,
         colmap_ba.mkdir(exist_ok=True, parents=True)
         logger.info("Running bundle adjustment")
         # --BundleAdjustment.refine_rotation_only 1
-        BA_cmd = f'colmap bundle_adjuster --BundleAdjustment.sequential_pairwise_constraint 1 --BundleAdjustment.refine_focal_length 0 --BundleAdjustment.refine_principal_point 0 --BundleAdjustment.refine_extra_params 0 --input_path {colmap_sparse} --output_path {colmap_ba}'
+        BA_cmd = f'colmap bundle_adjuster --BundleAdjustment.sequential_pairwise_constraint 1 --BundleAdjustment.current_iteration {i+1} --BundleAdjustment.save_path {colmap_ba} --BundleAdjustment.refine_focal_length 0 --BundleAdjustment.refine_principal_point 0 --BundleAdjustment.refine_extra_params 0 --input_path {colmap_sparse} --output_path {colmap_ba}'
         os.system(BA_cmd)
         
         colmap_input = colmap_ba
