@@ -52,56 +52,83 @@ remove_and_create_folder() {
   mkdir -p "$1"
 }
 
+# Function to log time spent on each step
+log_time() {
+  local step_name=$1
+  local start_time=$2
+  local end_time=$3
+  local duration=$((end_time - start_time))
+  echo "${step_name},${duration}" >> "${output_csv}"
+}
+
+# Function to execute a step and log its time
+execute_step() {
+    local step_name=$1
+    shift
+    local command=$@
+    local start_time=$(date +%s)
+    echo "Executing step: $step_name"
+    eval $command || { echo "Failed at step: $step_name"; exit 1; }
+    local end_time=$(date +%s)
+    log_time "$step_name" $start_time $end_time
+}
+
+# create output csv
+remove_and_create_folder "${input_base_path}/../output"
+output_csv="${input_base_path}/../output/duration.csv"
+echo "Step,Duration (secs)" > "${output_csv}"
+
 if [ "$skip_preprocess" = false ]; then
   echo "=== Preprocess ARkit data === "
+  
   remove_and_create_folder "${input_base_path}/post"
   remove_and_create_folder "${input_base_path}/post/sparse"
   remove_and_create_folder "${input_base_path}/post/sparse/online"
   remove_and_create_folder "${input_base_path}/post/sparse/online_loop"
 
-  echo "1. Undistort image using AVFoundation calibration data"
-  python arkit_utils/undistort_images/undistort_image.py --input_base ${input_base_path} || { echo "Failed to undistort images"; exit 10; }
+  execute_step "Undistort image" \
+    "python arkit_utils/undistort_images/undistort_image.py --input_base ${input_base_path}"
 
-  echo "2. Transform ARKit mesh to point3D"
   if [ ! -f "${input_base_path}/../scene.obj" ]; then
     echo "Error: scene.obj not found at ${input_base_path}/../scene.obj"
     exit 1
   fi
-  cp ${input_base_path}/../scene.obj ${input_base_path} || { echo "Failed to copy scene.obj"; exit 20; }
-  python arkit_utils/mesh_to_points3D/arkitobj2point3D.py --input_base_path ${input_base_path} || { echo "Failed to transform ARKit mesh to point3D"; exit 21; }
 
-  echo "3. Transform ARKit pose to COLMAP coordinate"
-  python arkit_utils/arkit_pose_to_colmap.py --input_database_path ${input_base_path} || { echo "Failed to transform ARKit pose to COLMAP coordinate"; exit 30; }
+  cp ${input_base_path}/../scene.obj ${input_base_path} || { echo "Failed to copy scene.obj"; exit 1; }
+  execute_step "Transform ARKit mesh to point3D" \
+    "python arkit_utils/mesh_to_points3D/arkitobj2point3D.py --input_base_path ${input_base_path}"
 
-  echo "4. Optimize pose using selected methods"
+  execute_step "Transform ARKit pose to COLMAP coordinate" \
+    "python arkit_utils/arkit_pose_to_colmap.py --input_database_path ${input_base_path}"
+
   if [[ ! " ${methods[@]} " =~ " arkit " ]]; then
-    remove_and_create_folder "${input_base_path}/post/sparse/offline" || { echo "Failed to create offline directory"; exit 40; }
-    python arkit_utils/pose_optimization/optimize_pose.py --input_database_path ${input_base_path} --methods "${methods[@]}" || { echo "Failed to optimize pose"; exit 41; }
+    remove_and_create_folder "${input_base_path}/post/sparse/offline" || { echo "Failed to create offline directory"; exit 1; }
+    execute_step "Optimize pose using selected methods" \
+      "python arkit_utils/pose_optimization/optimize_pose.py --input_database_path ${input_base_path} --methods \"${methods[@]}\""
   else
     echo "Skipping pose optimization"
   fi
 
   if [ "$use_icp" = true ]; then
-    echo "4.5 ICP registration"
     for method in "${methods[@]}"; do
       if [ "$method" != "arkit" ]; then
         echo "Running ICP for method: ${method}"
-        python arkit_utils/icp.py \
-          --base_dir "${input_base_path}/post/sparse/offline/${method}/final" \
-          --output_dir "${input_base_path}/post/sparse/offline/${method}_ICP/final" || { echo "Failed ICP for method: ${method}"; exit 45; }
+        execute_step "ICP registration" \
+          "python arkit_utils/icp.py --base_dir \"${input_base_path}/post/sparse/offline/${method}/final\" --output_dir \"${input_base_path}/post/sparse/offline/${method}_ICP/final\""
       fi
     done
   fi
 
-  echo "5. Prepare dataset for nerfstudio"
-  python arkit_utils/prepare_nerfstudio_dataset.py --input_path ${input_base_path} || { echo "Failed to prepare dataset for nerfstudio"; exit 50; }
+  execute_step "Prepare dataset for nerfstudio" \
+    "python arkit_utils/prepare_nerfstudio_dataset.py --input_path ${input_base_path}"
 
   echo "Dataset preparation completed."
 fi
 
-echo "6. Start training nerfstudio"
 if [ "$use_icp" = true ]; then
-  python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} --method "${methods[@]}" --use_icp || { echo "Failed to start training nerfstudio with ICP"; exit 60; }
+  execute_step "Training nerfstudio" \
+    "python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} --method \"${methods[@]}\" --use_icp"
 else
-  python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} --method "${methods[@]}" || { echo "Failed to start training nerfstudio"; exit 61; }
+  execute_step "Training nerfstudio" \
+    "python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} --method \"${methods[@]}\""
 fi
