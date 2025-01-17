@@ -34,10 +34,9 @@ def rotmat2qvec(R):
         qvec *= -1
     return qvec
 
-def read_pose_txt(path, output_prefix):
-    txt_path = path + "images.txt"
+def read_pose_txt(txt_file_path, is_COLMAP_format=False, tum_file_path=None):
     num_frames = 0
-    with open(txt_path, "r") as fid:
+    with open(txt_file_path, "r") as fid:
         while True:
             line = fid.readline()
             if not line:
@@ -51,7 +50,7 @@ def read_pose_txt(path, output_prefix):
     qxyzs = np.empty((num_frames, 4))
 
     count = 0
-    with open(txt_path, "r") as fid:
+    with open(txt_file_path, "r") as fid:
         while True:
             line = fid.readline()
             if not line:
@@ -61,26 +60,29 @@ def read_pose_txt(path, output_prefix):
                 elems = line.split()
                 qxyz = np.array(tuple(map(float, elems[1:5])))
                 xyz = np.array(tuple(map(float, elems[5:8])))
-
-                Twc = np.zeros((4, 4))
-                Twc[:3, :3] = qvec2rotmat(qxyz)
-                Twc[:3, 3] = xyz
-                Twc[3, 3] = 1.0
-                Twc = convert_pose(Twc)
-                Twc = np.array([[1, 0, 0, 0],
-                     [0, 0, -1, 0],
-                     [0, 1, 0, 0],
-                     [0, 0, 0, 1]]) @ Twc
+                if not is_COLMAP_format: # ARkit is Twc, COLMAP is Tcw
+                    Twc = np.zeros((4, 4))
+                    Twc[:3, :3] = qvec2rotmat(qxyz)
+                    Twc[:3, 3] = xyz
+                    Twc[3, 3] = 1.0
+                    Twc = convert_pose(Twc)
+                else:
+                    # COLMAP pose is in Tcw, we need Twc
+                    Tcw = np.zeros((4, 4))
+                    Tcw[:3, :3] = qvec2rotmat(qxyz)
+                    Tcw[:3, 3] = xyz
+                    Tcw[3, 3] = 1.0
+                    Twc = np.linalg.inv(Tcw)
                 
                 R = Twc[:3, :3]
                 qvec = rotmat2qvec(R)
                 tvec = Twc[:3, -1]
 
-                qxyzs[count] = qxyz
-                xyzs[count] = xyz
+                qxyzs[count] = qvec
+                xyzs[count] = tvec
                 count+=1
     
-    write_2_TUM_format(num_frames, xyzs, qxyzs, path+output_prefix+"_tum.txt")
+    write_2_TUM_format(num_frames, xyzs, qxyzs, tum_file_path)
 
 
 def read_next_bytes(fid, num_bytes, format_char_sequence, endian_character="<"):
@@ -94,10 +96,9 @@ def read_next_bytes(fid, num_bytes, format_char_sequence, endian_character="<"):
     data = fid.read(num_bytes)
     return struct.unpack(endian_character + format_char_sequence, data)
 
-def read_pose_bin(path):
+def read_pose_bin(bin_file_path):
     num_frames = 0
-    bin_path  = path + "images.bin"
-    with open(bin_path, "rb") as fid:
+    with open(bin_file_path, "rb") as fid:
         num_reg_images = read_next_bytes(fid, 8, "Q")[0]
         for _ in range(num_reg_images):
             binary_image_properties = read_next_bytes(
@@ -125,7 +126,7 @@ def read_pose_bin(path):
 
     count = 0
 
-    with open(bin_path, "rb") as fid:
+    with open(bin_file_path, "rb") as fid:
         num_reg_images = read_next_bytes(fid, 8, "Q")[0]
         for _ in range(num_reg_images):
             binary_image_properties = read_next_bytes(
@@ -177,23 +178,26 @@ if __name__ == "__main__":
     parser.add_argument("--input_base_path", type=str)
     args = parser.parse_args()
 
-    input_base_path = args.input_base_path
+    # input_base_path = args.input_base_path
 
-    input_pose_path = input_base_path + "/post/sparse/online/"
-    if(os.path.exists(input_pose_path)):
-        print("online pose to tum")
-        read_pose_txt(input_pose_path, "online")
+    # input_pose_path = input_base_path + "/post/sparse/online/"
+    # if(os.path.exists(input_pose_path)):
+    #     print("online pose to tum")
+    #     read_pose_txt(input_pose_path, "online")
 
-    input_pose_path = input_base_path + "/post/sparse/online_loop/"
-    if(os.path.exists(input_pose_path)):
-        print("online loop pose to tum")
-        read_pose_txt(input_pose_path, "online_loop")
+    # input_pose_path = input_base_path + "/post/sparse/online_loop/"
+    # if(os.path.exists(input_pose_path)):
+    #     print("online loop pose to tum")
+    #     read_pose_txt(input_pose_path, "online_loop")
 
-    input_pose_path = input_base_path + "/post/sparse/offline/"
-    if(os.path.exists(input_pose_path)):
-        print("offline pose to tum")
-        read_pose_txt(input_pose_path, "offline")
+    # input_pose_path = input_base_path + "/post/sparse/offline/"
+    # if(os.path.exists(input_pose_path)):
+    #     print("offline pose to tum")
+    #     read_pose_txt(input_pose_path, "offline")
+    read_pose_txt(txt_file_path="data/homee/GTC/subset_traj/images_whole.txt", 
+                  is_COLMAP_format=True, 
+                  tum_file_path="data/homee/GTC/subset_traj/whole_tum.txt")
 
 
-    # read_pose_bin("data/arkit_pose/meeting_room_loop_closure/arkit_colmap/colmap_arkit/raw/colmap_ba/")
+    # read_pose_bin("data/homee/GTC/subset_traj/ransac_query_images.bin")
 
