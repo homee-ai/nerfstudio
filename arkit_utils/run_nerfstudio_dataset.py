@@ -44,7 +44,7 @@ def main(args):
         '--orientation_method none',
         '--eval-mode fraction',
         '--train-split-fraction 1.0',
-    ])
+    ]
 
     full_cmds = ' '.join(cmds)  
     print("run nerfstudio with command: ", full_cmds)  
@@ -55,7 +55,6 @@ if __name__ == "__main__":
     parser.add_argument("--input_path", help="Path to the root directory of run_arkit_3dgs.sh output")
     parser.add_argument("--method", type=str, default=['arkit'], help="Choose pose optimization methods")
     parser.add_argument("--use_icp", action='store_true', default=False, help="use ICP for mesh and point3D")
-    parser.add_argument("--resume_train", type=str, help="Path to previous training output directory to resume from")
     args = parser.parse_args()
     
     main(args)
