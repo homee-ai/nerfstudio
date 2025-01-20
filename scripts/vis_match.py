@@ -7,6 +7,11 @@ import argparse
 import logging
 import colorlog
 from tabulate import tabulate
+import json
+from scipy.spatial.transform import Rotation
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+import struct
 
 # Set up colored logging
 handler = colorlog.StreamHandler()
@@ -215,16 +220,139 @@ def draw_matches_with_F_comparison(img1_path, img2_path, matches_data, output_pa
         'mean_error_ransac': mean_error_ransac
     }
 
-def visualize_all_pairs(db_path, images_dir, output_dir):
-    """視覺化所有影像配對"""
-    # 創建輸出目錄
+def write_filtered_images_txt(original_txt_path, output_txt_path, image_ids_to_keep):
+    """Write a new images.txt containing only the specified image IDs"""
+    with open(original_txt_path, 'r') as f_in, open(output_txt_path, 'w') as f_out:
+        # Copy header comments
+        line = f_in.readline()
+        while line.startswith('#'):
+            f_out.write(line)
+            line = f_in.readline()
+        
+        # Go back to start after headers
+        f_in.seek(0)
+        
+        # Skip header comments again
+        line = f_in.readline()
+        while line.startswith('#'):
+            line = f_in.readline()
+        
+        # Process each image entry (2 lines per image)
+        while line:
+            if line.strip():  # Skip empty lines
+                data = line.strip().split()
+                image_id = int(data[0])
+                
+                if image_id in image_ids_to_keep:
+                    # Write the image line
+                    f_out.write(line)
+                    # Write the points line
+                    points_line = f_in.readline()
+                    f_out.write(points_line)
+                else:
+                    # Skip the points line
+                    f_in.readline()
+            
+            line = f_in.readline()
+
+def write_images_txt(images_txt_path, output_txt_path, image_ids_to_keep):
+    """Convert images.txt to a new images.txt containing only specified image IDs"""
+    images = []
+    
+    with open(images_txt_path, 'r') as f:
+        # Skip header comments
+        line = f.readline()
+        while line.startswith('#'):
+            line = f.readline()
+        
+        # Process each image entry (2 lines per image)
+        while line:
+            if line.strip():  # Skip empty lines
+                data = line.strip().split()
+                image_id = int(data[0])
+                
+                if image_id in image_ids_to_keep:
+                    # Parse image data
+                    qvec = [float(x) for x in data[1:5]]  # [qw, qx, qy, qz]
+                    tvec = [float(x) for x in data[5:8]]  # [tx, ty, tz]
+                    camera_id = int(data[8])
+                    name = data[9]
+                    
+                    # Read points line
+                    points_line = f.readline().strip()
+                    
+                    images.append({
+                        'id': image_id,
+                        'qvec': qvec,
+                        'tvec': tvec,
+                        'camera_id': camera_id,
+                        'name': name,
+                        'points_line': points_line
+                    })
+                else:
+                    # Skip points line
+                    f.readline()
+            
+            line = f.readline()
+    
+    # Write text file
+    with open(output_txt_path, 'w') as f:
+        # Write header
+        f.write('# Image list with two lines of data per image:\n')
+        f.write('#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n')
+        f.write('#   POINTS2D[] as (X, Y, POINT3D_ID)\n')
+        
+        # Write each image
+        for image in images:
+            # Write image line
+            f.write(f"{image['id']} {' '.join(map(str, image['qvec']))} "
+                   f"{' '.join(map(str, image['tvec']))} {image['camera_id']} "
+                   f"{image['name']}\n")
+            
+            # Write points line
+            f.write(f"{image['points_line']}\n")
+
+def visualize_all_pairs(db_path, images_dir, output_dir, sparse_dir=None, query_image_ids=None, original_images_txt=None):
+    """視覺化影像配對和相對位姿"""
     output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True)
     
     # 獲取所有配對
     pairs, images = get_image_pairs(db_path)
     
-    # 連接資料庫獲取匹配數據
+    # Create sets for query and matched images
+    query_image_ids_set = set(query_image_ids) if query_image_ids else set()
+    matched_image_ids = set()
+    if query_image_ids:
+        for id1, id2 in pairs:
+            if id1 in query_image_ids_set:
+                matched_image_ids.add(id2)
+            if id2 in query_image_ids_set:
+                matched_image_ids.add(id1)
+    
+    # Remove query images from matched set
+    matched_image_ids -= query_image_ids_set
+    
+    # If original_images_txt is provided, create filtered versions
+    if original_images_txt:
+        # Create filtered text files
+        filtered_txt_path = output_dir / 'filtered_images.txt'
+        write_filtered_images_txt(original_images_txt, filtered_txt_path, 
+                                matched_image_ids | query_image_ids_set)
+        
+        # Create text files for query and matched images
+        if query_image_ids:
+            write_images_txt(original_images_txt, 
+                           output_dir / 'query_images.txt', 
+                           query_image_ids_set)
+            write_images_txt(original_images_txt, 
+                           output_dir / 'matched_images.txt', 
+                           matched_image_ids)
+            
+            logger.info(f"Created text files:")
+            logger.info(f"  - query_images.txt: {len(query_image_ids_set)} images")
+            logger.info(f"  - matched_images.txt: {len(matched_image_ids)} images")
+    
     conn = sqlite3.connect(db_path)
     
     stats = []
@@ -281,6 +409,22 @@ def visualize_all_pairs(db_path, images_dir, output_dir):
     
     conn.close()
 
+def parse_query_range(query_str):
+    """Parse query range from string like '1009-1169' into a list of integers"""
+    if not query_str:
+        return None
+    
+    # Handle individual numbers
+    if query_str.isdigit():
+        return [int(query_str)]
+    
+    # Handle ranges with hyphen
+    if '-' in query_str:
+        start, end = map(int, query_str.split('-'))
+        return list(range(start, end + 1))
+    
+    return None
+
 def main():
     # 設置命令行參數
     parser = argparse.ArgumentParser(description='視覺化 COLMAP 資料庫中的影像��配')
@@ -290,23 +434,31 @@ def main():
                         help='原始圖片目錄路徑')
     parser.add_argument('--output', '-o', required=True,
                         help='輸出結果目錄路徑')
-    parser.add_argument('--max-height', type=int, default=800,
-                        help='輸出圖片的最大高度 (預設: 800)')
-    parser.add_argument('--line-thickness', type=int, default=1,
-                        help='匹配線條粗細 (預設: 1)')
-    parser.add_argument('--line-color', nargs=3, type=int, default=[0, 255, 0],
-                        help='匹配線條顏色，BGR格式 (預設: 0 255 0)')
+    parser.add_argument('--query', '-q', type=str, nargs='+',
+                        help='指定要視覺化的圖片索引 (支援範圍表示法，例如: 1009-1169)')
+    parser.add_argument('--sparse', '-s', type=str,
+                        help='COLMAP稀疏重建模型目錄路徑')
+    parser.add_argument('--original-images-txt', type=str,
+                        help='Original COLMAP images.txt file path to create filtered version')
 
     args = parser.parse_args()
 
-    db_path = args.database
-    images_dir = args.images
-    output_dir = args.output
-    max_height = args.max_height
-    line_thickness = args.line_thickness
-    line_color = args.line_color
-
-    visualize_all_pairs(db_path, images_dir, output_dir)
+    # Parse query ranges if provided
+    query_ids = []
+    if args.query:
+        for q in args.query:
+            ids = parse_query_range(q)
+            if ids:
+                query_ids.extend(ids)
+    
+    visualize_all_pairs(
+        args.database, 
+        args.images, 
+        args.output, 
+        args.sparse, 
+        query_ids if query_ids else None,
+        args.original_images_txt
+    )
 
 if __name__ == "__main__":
     main()
