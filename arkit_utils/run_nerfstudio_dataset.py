@@ -33,6 +33,7 @@ def main(args):
         '--pipeline.model.rasterize-mode antialiased',
         '--pipeline.model.use-scale-regularization False',
         '--pipeline.model.camera-optimizer.mode SO3xR3',
+        '--pipeline.datamanager.train-cameras-sampling-strategy fps',
         '--pipeline.model.use-bilateral-grid True',
         '--viewer.make-share-url True',
         '--vis viewer+tensorboard',
@@ -52,7 +53,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert ARKit 3DGS output for nerfstudio training.")
     parser.add_argument("--input_path", help="Path to the root directory of run_arkit_3dgs.sh output")
-    parser.add_argument("--method", type=str,  default=['arkit'], help="Choose pose optimization methods")
+    parser.add_argument("--method", type=str, default=['arkit'], help="Choose pose optimization methods")
     parser.add_argument("--use_icp", action='store_true', default=False, help="use ICP for mesh and point3D")
     args = parser.parse_args()
     
