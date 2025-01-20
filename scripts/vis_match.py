@@ -386,7 +386,8 @@ def create_filtered_model(sparse_dir, output_dir, image_ids_to_keep):
     
     logger.info(f"Created filtered model in {output_dir}")
 
-def visualize_all_pairs(db_path, images_dir, output_dir, sparse_dir=None, query_image_ids=None, original_images_txt=None, skip_vis=False):
+def visualize_all_pairs(db_path, images_dir, output_dir, sparse_dir=None, query_image_ids=None, 
+                       original_images_txt=None, skip_vis=False, skip_query_pairs=False):
     """視覺化影像配對和相對位姿"""
     output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True)
@@ -403,6 +404,10 @@ def visualize_all_pairs(db_path, images_dir, output_dir, sparse_dir=None, query_
     filtered_pairs = []
     if query_image_ids:
         for id1, id2 in pairs:
+            # Skip pairs where both images are query images if skip_query_pairs is True
+            if skip_query_pairs and id1 in query_image_ids_set and id2 in query_image_ids_set:
+                continue
+                
             if id1 in query_image_ids_set or id2 in query_image_ids_set:
                 filtered_pairs.append((id1, id2))
                 if id1 in query_image_ids_set:
@@ -466,17 +471,14 @@ def visualize_all_pairs(db_path, images_dir, output_dir, sparse_dir=None, query_
             kp2 = keypoints2[idx2]
             matches_coords.append([kp1[0], kp1[1], kp2[0], kp2[1]])
         
+        # Only save visualization if not skipped
         if not skip_vis:
-            # Use the drawing function only if not skipping visualization
             result_stats = draw_matches_with_stats(
                 img1_path, img2_path, matches_coords, 
                 output_dir / f"match_{id1}_{id2}.jpg"
             )
         else:
-            # Just return the match count if skipping visualization
-            result_stats = {
-                'total_matches': len(matches_coords)
-            }
+            result_stats = {'total_matches': len(matches_coords)}
         
         stats.append({
             'image_pair': f"{images[id1]} - {images[id2]}",
@@ -556,6 +558,8 @@ def main():
                         help='Original COLMAP images.txt file path to create filtered version')
     parser.add_argument('--skip-vis', action='store_true',
                         help='Skip saving visualization images')
+    parser.add_argument('--skip-query-pairs', action='store_true',
+                        help='Skip pairs where both images are query images')
 
     args = parser.parse_args()
 
@@ -577,7 +581,8 @@ def main():
         args.sparse, 
         query_ids if query_ids else None,
         args.original_images_txt,
-        args.skip_vis
+        args.skip_vis,
+        args.skip_query_pairs
     )
 
 if __name__ == "__main__":
