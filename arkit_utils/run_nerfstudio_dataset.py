@@ -25,6 +25,14 @@ def main(args):
     if args.use_icp:
         pose_method = f"{pose_method}_ICP"
 
+    # Check number of images
+    images_dir = output_root / "images"
+    num_images = len(list(images_dir.iterdir())) if images_dir.exists() else 0
+    const_fps_reset = 100
+    sampling_strategy = 'fps'
+    if num_images <= const_fps_reset:
+        sampling_strategy = 'random'
+
     cmds = [
         'ns-train splatfacto ',
         f'--data {output_root} ',
@@ -33,7 +41,7 @@ def main(args):
         '--pipeline.model.rasterize-mode antialiased',
         '--pipeline.model.use-scale-regularization False',
         '--pipeline.model.camera-optimizer.mode SO3xR3',
-        '--pipeline.datamanager.train-cameras-sampling-strategy fps',
+        f'--pipeline.datamanager.train-cameras-sampling-strategy {sampling_strategy}',
         '--pipeline.model.use-bilateral-grid True',
         '--viewer.make-share-url True',
         '--vis viewer+tensorboard',
