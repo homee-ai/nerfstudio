@@ -152,6 +152,9 @@ def setup_hloc(dataset_base: str,
         matches = outputs / 'matches.h5'
 
         logger.info(f"Generating pairs from poses for {method}")
+        # Check number of images and adjust n_matched if needed
+        num_images = len(list(images.iterdir()))
+        n_matched = min(n_matched, num_images)
         pairs_from_poses.main(colmap_arkit, sfm_pairs, n_matched)
 
         if method in ['colmap', 'lightglue', 'glomap']:
