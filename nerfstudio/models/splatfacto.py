@@ -188,7 +188,10 @@ class SplatfactoModelConfig(ModelConfig):
     """Config of the camera optimizer to use"""
 
     use_mesh_initialization: bool = False
-    """If enable, will try to initialize gaussain from mesh""" 
+    """If enable, will try to initialize gaussain from mesh"""
+    
+    combine_mesh_sfm: bool = False
+    """If True and use_mesh_initialization is True, will combine mesh initialized gaussians with SFM points"""
 
     use_bilateral_grid: bool = False
     """If True, use bilateral grid to handle the ISP changes in the image space"""
@@ -234,15 +237,70 @@ class SplatfactoModel(Model):
             
             print("init gaussian from mesh")
 
-            (means, 
-            scales, 
-            quats) = create_from_pcd(pcd, self.config.sh_degree)
+            (means_mesh, 
+            scales_mesh, 
+            quats_mesh) = create_from_pcd(pcd, self.config.sh_degree)
 
-            num_points = means.shape[0]
+            # Move mesh tensors to CUDA
+            means_mesh = means_mesh.cuda()
+            scales_mesh = scales_mesh.cuda()
+            quats_mesh = quats_mesh.cuda()
+
+            num_points_mesh = means_mesh.shape[0]
             dim_sh = num_sh_bases(self.config.sh_degree)
-            features_dc = torch.nn.Parameter(torch.rand(num_points, 3))
-            features_rest = torch.nn.Parameter(torch.zeros((num_points, dim_sh - 1, 3)))
-            opacities = torch.nn.Parameter(torch.logit(0.1 * torch.ones(num_points, 1)))
+            features_dc_mesh = torch.nn.Parameter(torch.rand(num_points_mesh, 3, device="cuda"))
+            features_rest_mesh = torch.nn.Parameter(torch.zeros((num_points_mesh, dim_sh - 1, 3), device="cuda"))
+            opacities_mesh = torch.nn.Parameter(torch.logit(0.1 * torch.ones(num_points_mesh, 1, device="cuda")))
+
+            if not self.config.combine_mesh_sfm:
+                means = means_mesh
+                scales = scales_mesh
+                quats = quats_mesh
+                features_dc = features_dc_mesh
+                features_rest = features_rest_mesh
+                opacities = opacities_mesh
+            else:
+                # Initialize SFM points
+                if self.seed_points is not None and not self.config.random_init:
+                    means_sfm = self.seed_points[0].cuda()  # Move to CUDA
+                else:
+                    means_sfm = ((torch.rand((self.config.num_random, 3), device="cuda") - 0.5) 
+                                * self.config.random_scale)
+                
+                distances, _ = self.k_nearest_sklearn(means_sfm.cpu().data, 3)  # CPU operation
+                distances = torch.from_numpy(distances).cuda()  # Move back to CUDA
+                avg_dist = distances.mean(dim=-1, keepdim=True)
+                scales_sfm = torch.log(avg_dist.repeat(1, 3))
+                num_points_sfm = means_sfm.shape[0]
+                quats_sfm = random_quat_tensor(num_points_sfm).cuda()  # Move to CUDA
+
+                if (
+                    self.seed_points is not None
+                    and not self.config.random_init
+                    and self.seed_points[1].shape[0] > 0
+                ):
+                    shs = torch.zeros((self.seed_points[1].shape[0], dim_sh, 3), device="cuda")
+                    if self.config.sh_degree > 0:
+                        shs[:, 0, :3] = RGB2SH(self.seed_points[1].cuda() / 255)
+                        shs[:, 1:, 3:] = 0.0
+                    else:
+                        CONSOLE.log("use color only optimization with sigmoid activation")
+                        shs[:, 0, :3] = torch.logit(self.seed_points[1].cuda() / 255, eps=1e-10)
+                    features_dc_sfm = shs[:, 0, :]
+                    features_rest_sfm = shs[:, 1:, :]
+                else:
+                    features_dc_sfm = torch.rand(num_points_sfm, 3, device="cuda")
+                    features_rest_sfm = torch.zeros((num_points_sfm, dim_sh - 1, 3), device="cuda")
+
+                opacities_sfm = torch.logit(0.1 * torch.ones(num_points_sfm, 1, device="cuda"))
+
+                # Combine mesh and SFM parameters
+                means = torch.nn.Parameter(torch.cat([means_mesh, means_sfm], dim=0))
+                scales = torch.nn.Parameter(torch.cat([scales_mesh, scales_sfm], dim=0))
+                quats = torch.nn.Parameter(torch.cat([quats_mesh, quats_sfm], dim=0))
+                features_dc = torch.nn.Parameter(torch.cat([features_dc_mesh, features_dc_sfm], dim=0))
+                features_rest = torch.nn.Parameter(torch.cat([features_rest_mesh, features_rest_sfm], dim=0))
+                opacities = torch.nn.Parameter(torch.cat([opacities_mesh, opacities_sfm], dim=0))
 
             self.xys_grad_norm = None
             self.max_2Dsize = None
@@ -296,7 +354,7 @@ class SplatfactoModel(Model):
         )
 
         self.camera_optimizer: CameraOptimizer = self.config.camera_optimizer.setup(
-            num_cameras=self.num_train_data, device="cpu"
+            num_cameras=self.num_train_data, device="cuda"
         )
 
         # metrics
@@ -1161,7 +1219,7 @@ def calc_scaling_rot(alpha, scale, vertices, faces, eps=1e-8):
     ) # (num_face * num_splat, 3) scale vectors for each gaussian
 
     rotation = torch.stack((v0, v1, v2), dim=1).unsqueeze(dim=1) # (num_face, 1, 3, 3)
-    rotation = rotation.broadcast_to((*alpha.shape[:2], 3, 3)).flatten(start_dim=0, end_dim=1) # (num_face * num_splat, 3, 3) all points on the same face have same scaling and rotation.
+    rotation = rotation.broadcast_to((*alpha.shape[:2], 3, 3)).flatten(start_dim=0, end_dim=1) # (num_face * num_splat, 3, 3)
     rotation = rotation.transpose(-2, -1) # (num_face * num_splat, 3, 3)
     rotation = rot_to_quat_batch(rotation) # (num_face * num_splat, 4) rotation matrix to quarternion
 
