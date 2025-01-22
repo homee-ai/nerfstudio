@@ -3,7 +3,7 @@ set -e
 
 # Validate the input arguments
 if [ $# -lt 1 ]; then
-  echo "Usage: $0 <input_base_path> [<method1> <method2> ...] [--icp] [--skip-preprocess]"
+  echo "Usage: $0 <input_base_path> [<method1> <method2> ...] [--icp] [--skip-preprocess] [--resume-train <path>]"
   echo "Available methods: arkit colmap, loftr, lightglue, glomap"
   echo "Default method: arkit"
   exit 1
@@ -14,6 +14,7 @@ shift
 methods=()
 use_icp=false
 skip_preprocess=false
+resume_train=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -25,6 +26,10 @@ while [[ $# -gt 0 ]]; do
     --skip-preprocess)
       skip_preprocess=true
       shift
+      ;;
+    --resume-train)
+      resume_train="$2"
+      shift 2
       ;;
     *)
       methods+=("$1")
@@ -44,6 +49,7 @@ echo "  input_base_path: ${input_base_path}"
 echo "  methods: ${methods[@]}"
 echo "  use_icp: ${use_icp}"
 echo "  skip_preprocess: ${skip_preprocess}"
+echo "  resume_train: ${resume_train}"
 
 remove_and_create_folder() {
   if [ -d "$1" ]; then
@@ -125,10 +131,13 @@ if [ "$skip_preprocess" = false ]; then
   echo "Dataset preparation completed."
 fi
 
+# Training section
 if [ "$use_icp" = true ]; then
   execute_step "Training nerfstudio" \
-    "python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} --method \"${methods[@]}\" --use_icp"
+    "python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} \
+    --method \"${methods[@]}\" --use_icp ${resume_train:+--resume_path \"$resume_train\"}"
 else
   execute_step "Training nerfstudio" \
-    "python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} --method \"${methods[@]}\""
+    "python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} \
+    --method \"${methods[@]}\" ${resume_train:+--resume_path \"$resume_train\"}"
 fi

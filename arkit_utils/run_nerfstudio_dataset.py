@@ -37,7 +37,25 @@ def main(args):
         'ns-train splatfacto ',
         f'--data {output_root} ',
         '--max-num-iterations 30000',
+    ]
+
+    # Add load-dir argument if resume_path is provided
+    if args.resume_path:
+        # Check if the path exists and contains checkpoint files
+        resume_path = Path(args.resume_path)
+        if resume_path.exists():
+            # Look for the latest checkpoint file
+            checkpoint_files = list(resume_path.glob("step-*.ckpt"))
+            if checkpoint_files:
+                cmds.append(f'--load-dir {args.resume_path}')
+            else:
+                print(f"Warning: No checkpoint files found in {args.resume_path}")
+        else:
+            print(f"Warning: Resume path {args.resume_path} does not exist")
+
+    cmds.extend([
         '--pipeline.model.use-mesh-initialization True',
+        '--pipeline.model.combine-mesh-sfm True',
         '--pipeline.model.rasterize-mode antialiased',
         '--pipeline.model.use-scale-regularization False',
         '--pipeline.model.camera-optimizer.mode SO3xR3',
@@ -52,7 +70,7 @@ def main(args):
         '--orientation_method none',
         '--eval-mode fraction',
         '--train-split-fraction 1.0',
-    ]
+    ])
 
     full_cmds = ' '.join(cmds)  
     print("run nerfstudio with command: ", full_cmds)  
@@ -63,6 +81,7 @@ if __name__ == "__main__":
     parser.add_argument("--input_path", help="Path to the root directory of run_arkit_3dgs.sh output")
     parser.add_argument("--method", type=str, default=['arkit'], help="Choose pose optimization methods")
     parser.add_argument("--use_icp", action='store_true', default=False, help="use ICP for mesh and point3D")
+    parser.add_argument("--resume_path", type=str, help="Path to the previous training output directory to resume from")
     args = parser.parse_args()
     
     main(args)
