@@ -107,47 +107,64 @@ def register_point_clouds(source, target):
     
     return reg_p2l.transformation
 
+def transform_points3d(points3d_path, transformation, output_path):
+    """
+    Transform points3D.txt using ICP transformation matrix.
+    """
+    points3d = hloc_io.read_points3D_text(points3d_path)
+
+    # Transform each 3D point
+    for pid in points3d:
+        p = points3d[pid]
+        # Convert to homogeneous coordinates
+        xyz = np.array([p.xyz[0], p.xyz[1], p.xyz[2], 1.0])
+        # Apply transformation
+        xyz_transformed = transformation @ xyz
+        # Update point coordinates while preserving other properties
+        points3d[pid] = p._replace(xyz=xyz_transformed[:3])
+
+    # Write transformed points using hloc's writer
+    hloc_io.write_points3D_text(points3d, output_path)
+
 def transform_images(images_path, transformation, output_path):
     """
     Transform camera poses from images.txt using ICP transformation matrix.
     Accounts for world-to-camera transformation order.
     """
     images = hloc_io.read_images_text(images_path)
-    
-    with open(output_path, 'w') as f:
-        # Write header...
+
+    # Transform each image's pose
+    for image_id in images:
+        image = images[image_id]
         
-        for image_id, image in images.items():
-            # Get original world-to-camera transformation
-            R_orig = qvec2rotmat(image.qvec)
-            t_orig = image.tvec
-            
-            # Create 4x4 world-to-camera matrix
-            Tw2c = np.eye(4)
-            Tw2c[:3, :3] = R_orig
-            Tw2c[:3, 3] = t_orig
-            
-            # New transformation: T_icp * Tw2c
-            # This first transforms from world to camera, then applies ICP alignment
-            pose_new = Tw2c @ np.linalg.inv(transformation)  # Note the inverse!
-            
-            # Extract new rotation and translation
-            R_new = pose_new[:3, :3]
-            t_new = pose_new[:3, 3]
-            
-            # Convert rotation matrix to quaternion
-            # Note: We need to handle potential numerical instabilities
-            from scipy.spatial.transform import Rotation
-            r = Rotation.from_matrix(R_new)
-            qw, qx, qy, qz = r.as_quat()[[3, 0, 1, 2]]  # Reorder to w,x,y,z
-            
-            # Write first line: image info
-            f.write(f'{image_id} {qw} {qx} {qy} {qz} {t_new[0]} {t_new[1]} {t_new[2]} {image.camera_id} {image.name}\n')
-            
-            # print(image.point3D_ids.shape)
-            # Write second line: points2D info
-            # points2D_line = image.point3D_ids.flatten()
-            f.write('\n')
+        # Get original world-to-camera transformation
+        R_orig = qvec2rotmat(image.qvec)
+        t_orig = image.tvec
+        
+        # Create 4x4 world-to-camera matrix
+        Tw2c = np.eye(4)
+        Tw2c[:3, :3] = R_orig
+        Tw2c[:3, 3] = t_orig
+        
+        # New transformation: T_icp * Tw2c
+        pose_new = Tw2c @ np.linalg.inv(transformation)
+        
+        # Extract new rotation and translation
+        R_new = pose_new[:3, :3]
+        t_new = pose_new[:3, 3]
+        
+        # Convert rotation matrix to quaternion
+        from scipy.spatial.transform import Rotation
+        qvec_new = Rotation.from_matrix(R_new).as_quat()[[3, 0, 1, 2]]  # xyzw to wxyz
+        
+        # Update image pose while preserving other fields
+        images[image_id] = image._replace(
+            qvec=qvec_new,
+            tvec=t_new
+        )
+
+    # Write transformed images using hloc's writer
+    hloc_io.write_images_text(images, output_path)
 
 def main(args):
     base_dir = args.base_dir
@@ -171,8 +188,15 @@ def main(args):
     
     # Copy and transform necessary files
     shutil.copy2(os.path.join(base_dir, "cameras.txt"), os.path.join(output_dir, "cameras.txt"))
-    shutil.copy2(os.path.join(base_dir, "points3D.txt"), os.path.join(output_dir, "points3D.txt"))
-    
+
+    # transform points3D.txt
+    print("Transforming points3D.txt...")
+    transform_points3d(
+        os.path.join(base_dir, "points3D.txt"),
+        transformation,
+        os.path.join(output_dir, "points3D.txt")
+    )
+
     # Transform camera poses
     print("Transforming camera poses...")
     transform_images(
