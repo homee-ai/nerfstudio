@@ -117,11 +117,12 @@ def transform_points3d(points3d_path, transformation, output_path):
     for pid in points3d:
         p = points3d[pid]
         # Convert to homogeneous coordinates
-        xyz = np.array([p.xyz[0], p.xyz[1], p.xyz[2], 1.0])
-        # Apply transformation
-        xyz_transformed = transformation @ xyz
+        Ps = np.array([p.xyz[0], p.xyz[1], p.xyz[2], 1.0])
+        # The transformation is from source to target (Ts2t), 
+        # While Ps is point in source, the new point in target is Pt = Ts2t @ Ps
+        Pt = transformation @ Ps
         # Update point coordinates while preserving other properties
-        points3d[pid] = p._replace(xyz=xyz_transformed[:3])
+        points3d[pid] = p._replace(xyz=Pt[:3])
 
     # Write transformed points using hloc's writer
     hloc_io.write_points3D_text(points3d, output_path)
@@ -146,7 +147,9 @@ def transform_images(images_path, transformation, output_path):
         Tw2c[:3, :3] = R_orig
         Tw2c[:3, 3] = t_orig
         
-        # New transformation: T_icp * Tw2c
+        # Since the transformation is from souce to target (Ts2t), 
+        # while Tw2c is from source to camera (Tw2c=Ts2c),
+        # the new transformation is Tt2c = Ts2c @ np.linalg.inv(Ts2t)
         pose_new = Tw2c @ np.linalg.inv(transformation)
         
         # Extract new rotation and translation
