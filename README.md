@@ -15,7 +15,7 @@ source scripts/install.sh
 ### 3. Run the training pipeline 
 - With preprocessing
   ```shell
-  bash run.sh /folder/of/your/data/colmap/ colmap --use-icp(optional)
+  bash run.sh /folder/of/your/data/colmap/ colmap --icp(optional)
   ```
 
 - Without preprocessing (if you have already preprocessed the dataset)
