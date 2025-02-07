@@ -2,6 +2,7 @@ import os
 import shutil
 import argparse
 from pathlib import Path
+from background_color import get_background_color
 
 def create_directory(path):
     os.makedirs(path, exist_ok=True)
@@ -25,8 +26,16 @@ def main(args):
     if args.use_icp:
         pose_method = f"{pose_method}_ICP"
 
-    # Check number of images
+    # Get background color from images
     images_dir = output_root / "images"
+    try:
+        bg_color = get_background_color(str(images_dir))
+        bg_color_str = f"{bg_color[0]},{bg_color[1]},{bg_color[2]}"
+    except Exception as e:
+        print(f"Warning: Could not detect background color: {e}")
+        bg_color_str = None
+
+    # Check number of images
     num_images = len(list(images_dir.iterdir())) if images_dir.exists() else 0
     const_fps_reset = 100
     sampling_strategy = 'fps'
@@ -36,8 +45,13 @@ def main(args):
     cmds = [
         'ns-train splatfacto ',
         f'--data {output_root} ',
-        '--max-num-iterations 30000',
+        '--max-num-iterations 10000',
     ]
+
+    # Add background color if detected
+    if bg_color_str is not None:
+        cmds.append('--pipeline.model.background-color custom')
+        cmds.append(f'--pipeline.model.custom-background-color {bg_color_str}')
 
     # Add load-dir argument if resume_path is provided
     if args.resume_path:
@@ -54,13 +68,13 @@ def main(args):
             print(f"Warning: Resume path {args.resume_path} does not exist")
 
     cmds.extend([
-        '--pipeline.model.use-mesh-initialization True',
-        '--pipeline.model.combine-mesh-sfm True',
+        '--pipeline.model.use-mesh-initialization False',
         '--pipeline.model.rasterize-mode antialiased',
-        '--pipeline.model.use-scale-regularization False',
+        '--pipeline.model.use-scale-regularization True',
         '--pipeline.model.camera-optimizer.mode SO3xR3',
         f'--pipeline.datamanager.train-cameras-sampling-strategy {sampling_strategy}',
         '--pipeline.model.use-bilateral-grid True',
+        '--pipeline.model.sh-degree 2',
         '--viewer.make-share-url True',
         '--vis viewer+tensorboard',
         'colmap',
@@ -80,6 +94,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert ARKit 3DGS output for nerfstudio training.")
     parser.add_argument("--input_path", help="Path to the root directory of run_arkit_3dgs.sh output")
     parser.add_argument("--method", type=str, default=['arkit'], help="Choose pose optimization methods")
+    parser.add_argument("--model-type", type=str, default="splatfacto", help="Model type for training")
     parser.add_argument("--use_icp", action='store_true', default=False, help="use ICP for mesh and point3D")
     parser.add_argument("--resume_path", type=str, help="Path to the previous training output directory to resume from")
     args = parser.parse_args()

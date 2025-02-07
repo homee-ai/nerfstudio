@@ -22,7 +22,9 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Literal, Optional, Tuple, Type, Union
-
+from copy import deepcopy
+import os
+import cv2
 import numpy as np
 import torch
 from gsplat.cuda_legacy._torch_impl import quat_to_rotmat
@@ -128,8 +130,10 @@ class SplatfactoModelConfig(ModelConfig):
     """period of steps where gaussians are culled and densified"""
     resolution_schedule: int = 3000
     """training starts at 1/d resolution, every n steps this is doubled"""
-    background_color: Literal["random", "black", "white"] = "random"
-    """Whether to randomize the background color."""
+    background_color: Literal["random", "black", "white", "custom"] = "random"
+    """Whether to randomize the background color or use specific color."""
+    custom_background_color: Optional[str] = None
+    """Custom background color in R,G,B format (comma-separated values between 0-255)"""
     num_downscales: int = 2
     """at the beginning, resolution is 1/2^d, where d is this number"""
     cull_alpha_thresh: float = 0.1
@@ -235,8 +239,6 @@ class SplatfactoModel(Model):
             if pcd is None:
                 raise ValueError("Trying to use_mesh_initialization, scene.obj must be under sparse/0 folder")
             
-            print("init gaussian from mesh")
-
             (means_mesh, 
             scales_mesh, 
             quats_mesh) = create_from_pcd(pcd, self.config.sh_degree)
@@ -372,7 +374,7 @@ class SplatfactoModel(Model):
                 [0.1490, 0.1647, 0.2157]
             )  # This color is the same as the default background color in Viser. This would only affect the background color when rendering.
         else:
-            self.background_color = get_color(self.config.background_color)
+            self.background_color = self._get_background_color()
 
         if self.config.use_bilateral_grid:
             self.bil_grids = BilateralGrid(
@@ -785,15 +787,25 @@ class SplatfactoModel(Model):
         return {"rgb": rgb, "depth": depth, "accumulation": accumulation, "background": background}
 
     def _get_background_color(self):
+        # get device from means
+        device = self.means.device
         if self.config.background_color == "random":
             if self.training:
-                background = torch.rand(3, device=self.device)
+                background = torch.rand(3, device=device)
             else:
-                background = self.background_color.to(self.device)
+                background = self.background_color.to(device)
         elif self.config.background_color == "white":
-            background = torch.ones(3, device=self.device)
+            background = torch.ones(3, device=device)
         elif self.config.background_color == "black":
-            background = torch.zeros(3, device=self.device)
+            background = torch.zeros(3, device=device)
+        elif self.config.background_color == "custom":
+            if self.config.custom_background_color is None:
+                raise ValueError("custom_background_color must be set when using custom background")
+            try:
+                r, g, b = map(int, self.config.custom_background_color.split(','))
+                background = torch.tensor([r, g, b], device=device) / 255.0
+            except Exception as e:
+                raise ValueError(f"Invalid custom_background_color format. Expected 'R,G,B': {e}")
         else:
             raise ValueError(f"Unknown background color {self.config.background_color}")
         return background
@@ -840,7 +852,7 @@ class SplatfactoModel(Model):
             crop_ids = self.crop_box.within(self.means).squeeze()
             if crop_ids.sum() == 0:
                 return self.get_empty_outputs(
-                    int(camera.width.item()), int(camera.height.item()), self.background_color
+                    int(camera.width.item()), int(camera.height.item()), self._get_background_color()
                 )
         else:
             crop_ids = None
@@ -1093,7 +1105,6 @@ class SplatfactoModel(Model):
         images_dict = {"img": combined_rgb}
 
         return metrics_dict, images_dict
-
 
 def create_from_pcd(pcd: MeshPointCloud, max_sh_degree: int):
     print("Creating GaussianMeshModel from MeshPointCloud")

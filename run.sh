@@ -3,7 +3,7 @@ set -e
 
 # Validate the input arguments
 if [ $# -lt 1 ]; then
-  echo "Usage: $0 <input_base_path> [<method1> <method2> ...] [--icp] [--skip-preprocess] [--resume-train <path>]"
+  echo "Usage: $0 <input_base_path> [<method1> <method2> ...] [--icp] [--skip-preprocess] [--resume-train <path>] [--chunked-train] [--chunk-size <size>] [--chunk-iterations <iters>] [--partition-method <method>] [--m-region <size>] [--n-region <size>] [--n-clusters <clusters>] [--skip-chunk-training] [--no-filter-gaussians]"
   echo "Available methods: arkit colmap, loftr, lightglue, glomap"
   echo "Default method: arkit"
   exit 1
@@ -15,6 +15,16 @@ methods=()
 use_icp=false
 skip_preprocess=false
 resume_train=""
+use_chunked_train=false
+chunk_size=500
+chunk_iterations=10000
+final_iterations=10000
+partition_method="chunk_size"
+m_region=2
+n_region=2
+n_clusters=4
+skip_chunk_training=false
+filter_gaussians=true
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -30,6 +40,46 @@ while [[ $# -gt 0 ]]; do
     --resume-train)
       resume_train="$2"
       shift 2
+      ;;
+    --chunked-train)
+      use_chunked_train=true
+      shift
+      ;;
+    --chunk-size)
+      chunk_size="$2"
+      shift 2
+      ;;
+    --chunk-iterations)
+      chunk_iterations="$2"
+      shift 2
+      ;;
+    --final-iterations)
+      final_iterations="$2"
+      shift 2
+      ;;
+    --partition-method)
+      partition_method="$2"
+      shift 2
+      ;;
+    --m-region)
+      m_region="$2"
+      shift 2
+      ;;
+    --n-region)
+      n_region="$2"
+      shift 2
+      ;;
+    --n-clusters)
+      n_clusters="$2"
+      shift 2
+      ;;
+    --skip-chunk-training)
+      skip_chunk_training=true
+      shift
+      ;;
+    --no-filter-gaussians)
+      filter_gaussians=false
+      shift
       ;;
     *)
       methods+=("$1")
@@ -50,6 +100,16 @@ echo "  methods: ${methods[@]}"
 echo "  use_icp: ${use_icp}"
 echo "  skip_preprocess: ${skip_preprocess}"
 echo "  resume_train: ${resume_train}"
+echo "  use_chunked_train: ${use_chunked_train}"
+echo "  chunk_size: ${chunk_size}"
+echo "  chunk_iterations: ${chunk_iterations}"
+echo "  final_iterations: ${final_iterations}"
+echo "  partition_method: ${partition_method}"
+echo "  m_region: ${m_region}"
+echo "  n_region: ${n_region}"
+echo "  n_clusters: ${n_clusters}"
+echo "  skip_chunk_training: ${skip_chunk_training}"
+echo "  filter_gaussians: ${filter_gaussians}"
 
 remove_and_create_folder() {
   if [ -d "$1" ]; then
@@ -74,6 +134,7 @@ execute_step() {
     local command=$@
     local start_time=$(date +%s)
     echo "Executing step: $step_name"
+    echo "Command: $command"
     eval $command || { echo "Failed at step: $step_name"; exit 1; }
     local end_time=$(date +%s)
     log_time "$step_name" $start_time $end_time
@@ -128,16 +189,49 @@ if [ "$skip_preprocess" = false ]; then
   execute_step "Prepare dataset for nerfstudio" \
     "python arkit_utils/prepare_nerfstudio_dataset.py --input_path ${input_base_path}"
 
+  
   echo "Dataset preparation completed."
 fi
 
 # Training section
 if [ "$use_icp" = true ]; then
-  execute_step "Training nerfstudio" \
-    "python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} \
-    --method \"${methods[@]}\" --use_icp ${resume_train:+--resume_path \"$resume_train\"}"
+  if [ "$use_chunked_train" = true ]; then
+    execute_step "Training nerfstudio with chunks" \
+      "python arkit_utils/run_nerfstudio_dataset_chunks.py \
+      --input_path ${input_base_path} \
+      --method ${methods[@]} \
+      --use_icp \
+      --chunk_size ${chunk_size} \
+      --chunk_iterations ${chunk_iterations} \
+      --final_iterations ${final_iterations} \
+      --partition_method ${partition_method} \
+      --m_region ${m_region} \
+      --n_region ${n_region} \
+      --n_clusters ${n_clusters} \
+      $([ "$skip_chunk_training" = true ] && echo "--skip-chunk-training") \
+      $([ "$filter_gaussians" = true ] && echo "--filter-gaussians")"
+  else
+    execute_step "Training nerfstudio" \
+      "python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} \
+      --method \"${methods[@]}\" --use_icp ${resume_train:+--resume_path \"$resume_train\"}"
+  fi
 else
-  execute_step "Training nerfstudio" \
-    "python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} \
-    --method \"${methods[@]}\" ${resume_train:+--resume_path \"$resume_train\"}"
+  if [ "$use_chunked_train" = true ]; then
+    execute_step "Training nerfstudio with chunks" \
+      "python arkit_utils/run_nerfstudio_dataset_chunks.py \
+      --input_path ${input_base_path} \
+      --method ${methods[@]} \
+      --chunk_size ${chunk_size} \
+      --chunk_iterations ${chunk_iterations} \
+      --final_iterations ${final_iterations} \
+      --partition_method ${partition_method} \
+      --m_region ${m_region} \
+      --n_region ${n_region} \
+      --n_clusters ${n_clusters} \
+      $([ "$skip_chunk_training" = true ] && echo "--skip-chunk-training") \
+      $([ "$filter_gaussians" = true ] && echo "--filter-gaussians")"
+  else
+    execute_step "Training nerfstudio" \
+      "python arkit_utils/run_nerfstudio_dataset.py ${cmd_args[@]}"
+  fi
 fi
