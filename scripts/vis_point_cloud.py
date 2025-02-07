@@ -1,17 +1,18 @@
 # 4) Use Knn search to show multiple point clouds which are color coded
 
-import cv2
+import time
 from dataclasses import dataclass
-import open3d as o3d
-from pyquaternion import Quaternion
-import numpy as np
-import viser
 from pathlib import Path
+
+import cv2
 import matplotlib.pyplot as plt
-from nerfstudio.data.utils.colmap_parsing_utils import (
-    read_cameras_text,
-    read_images_text,
-)
+import numpy as np
+import open3d as o3d
+import viser
+from pyquaternion import Quaternion
+
+from nerfstudio.data.utils.colmap_parsing_utils import (read_cameras_text,
+                                                        read_images_text)
 
 
 @dataclass
@@ -85,7 +86,12 @@ class PosedRGBDWithCalibration:
 
 class DatasetReader:
     def __init__(
-        self, depth_folder: Path, color_folder: Path, calib_file: Path, pose_file
+        self,
+        depth_folder: Path,
+        color_folder: Path,
+        calib_file: Path,
+        pose_file: Path,
+        is_pose_colmap: bool,
     ):
         assert "cameras.txt" in calib_file.name  # colmap format
         assert pose_file.name == "images.txt"  # colmap format
@@ -152,6 +158,31 @@ class DatasetReader:
             depth,
             rgb,
         )
+
+    # TODO: move to util or reuse code in arkit_pose_to_colmap.py
+    def __arkit_pose_to_colmap_pose(arkit_pose):
+        # arkit pose: tf_c2w
+        #      ^ (y)
+        #      |
+        #      |---> (x)
+        #     /
+        #    /
+        #   v (z)
+        # colmap pose: tf_w2c
+        #         ^ (z)
+        #        /
+        #       /
+        #      |---> (x)
+        #      |
+        #      |
+        #      v (y)
+
+        arkit_pose = np.linalg.inv(arkit_pose)
+        tf_arkit2colmap = np.eye(4)
+        tf_arkit2colmap[:2, :2] = np.array([[1, 0, 0], [0, -1, 0], [0, -1, 0]])
+        colmap_pose = tf_arkit2colmap @ arkit_pose
+
+        return colmap_pose
 
     # TODO: move to util
     def __compute_scaled_intrinsic(
@@ -226,21 +257,23 @@ def main():
     assert colmap_icp_poses.is_file()
     assert k_path.is_file()
 
-    reader = DatasetReader(depth_path, color_path, k_path, arkit_poses)
+    # FIX: using arkit_poses won't work
+    reader = DatasetReader(depth_path, color_path, k_path, colmap_icp_poses, True)
 
-    # TODO: not hardcode index range and sliding window size here
+    # TODO: show point cloud in a sliding window instead of all
+    for index in range(2, 2000):
+        posed_rgbd = reader.get_posed_rgbd(index)
+        pcd = posed_rgbd.to_point_cloud()
+
+        # server.scene.add_frame(
+        #     f"frame{index}", wxyz=posed_rgbd.q_w2c, position=posed_rgbd.t_w2c
+        # )
+
+        server.scene.add_point_cloud(
+            f"pcd{index}", np.asarray(pcd.points), np.asarray(pcd.colors)
+        )
     while True:
-        for index in range(2, 10):
-            posed_rgbd = reader.get_posed_rgbd(index)
-            pcd = posed_rgbd.to_point_cloud()
-
-            server.scene.add_frame(
-                f"frame{index}", wxyz=posed_rgbd.q_w2c, position=posed_rgbd.t_w2c
-            )
-
-            server.scene.add_point_cloud(
-                f"pcd{index}", np.asarray(pcd.points), np.asarray(pcd.colors)
-            )
+        time.sleep(0.033)
 
 
 if __name__ == "__main__":
