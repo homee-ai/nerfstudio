@@ -45,7 +45,7 @@ def main(args):
     cmds = [
         'ns-train splatfacto ',
         f'--data {output_root} ',
-        '--max-num-iterations 10000',
+        '--max-num-iterations 30000',
     ]
 
     # Add background color if detected
@@ -68,15 +68,17 @@ def main(args):
             print(f"Warning: Resume path {args.resume_path} does not exist")
 
     cmds.extend([
-        '--pipeline.model.use-mesh-initialization False',
+        '--pipeline.model.use-mesh-initialization True',
+        '--pipeline.model.combine-mesh-sfm True'
         '--pipeline.model.rasterize-mode antialiased',
-        '--pipeline.model.use-scale-regularization True',
+        '--pipeline.model.use-scale-regularization False',
         '--pipeline.model.camera-optimizer.mode SO3xR3',
         f'--pipeline.datamanager.train-cameras-sampling-strategy {sampling_strategy}',
         '--pipeline.model.use-bilateral-grid True',
         '--pipeline.model.sh-degree 2',
         '--viewer.make-share-url True',
         '--vis viewer+tensorboard',
+        '--viewer.quit-on-train-completion True',
         'colmap',
         f'--colmap_path "colmap/{pose_method}/0"',
         '--auto_scale_poses False',
