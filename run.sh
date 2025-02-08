@@ -102,7 +102,7 @@ trap 'error_handler $LINENO "$BASH_COMMAND"' ERR
 
 # Validate the input arguments
 if [ $# -lt 1 ]; then
-  echo "Usage: $0 <input_base_path> [<method1> <method2> ...] [--icp] [--skip-preprocess] [--resume-train <path>] [--chunked-train] [--is-adaptive] [--chunk-size <size>] [--chunk-iterations <iters>] [--partition-method <method>] [--m-region <size>] [--n-region <size>] [--n-clusters <clusters>] [--skip-chunk-training] [--no-filter-gaussians]"
+  echo "Usage: $0 <input_base_path> [<method1> <method2> ...] [--icp] [--skip-preprocess] [--resume-train <path>] [--chunked-train] [--is-adaptive] [--chunk-size <size>] [--chunk-iterations <iters>] [--final-iterations <iters>] [--partition-method <method>] [--m-region <size>] [--n-region <size>] [--n-clusters <clusters>] [--skip-chunk-training] [--no-filter-gaussians]"
   echo "Available methods: arkit colmap, loftr, lightglue, glomap"
   echo "Default method: arkit"
   exit 1

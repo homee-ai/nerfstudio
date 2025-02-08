@@ -45,7 +45,7 @@ class ChunkTrainingConfig(TrainingConfig):
 @dataclass
 class FinalTrainingConfig(TrainingConfig):
     """Configuration specific to final training."""
-    max_iterations: int = 10000
+    max_iterations: int = 30000
     load_dir: Optional[str] = None
     num_downscales:int = 0
     
@@ -786,10 +786,6 @@ def main(args):
         print(f"\nWarning: Failed to clean up intermediate checkpoint: {e}")
 
 if __name__ == "__main__":
-    try:
-        parser = argparse.ArgumentParser(description="Train nerfstudio model on chunked dataset")
-        parser.add_argument("--input_path", help="Path to the root directory of run_arkit_3dgs.sh output")
-        parser.add_argument("--method", type=str, default='arkit', help="Choose pose optimization methods")
     parser = argparse.ArgumentParser(description="Train nerfstudio model on chunked dataset")
     parser.add_argument("--input_path", help="Path to the root directory of run_arkit_3dgs.sh output")
     parser.add_argument("--method", type=str, default='arkit', help="Choose pose optimization methods")
