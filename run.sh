@@ -240,7 +240,6 @@ if [ "$skip_preprocess" = false ]; then
   execute_step "Prepare dataset for nerfstudio" \
     "python arkit_utils/prepare_nerfstudio_dataset.py --input_path ${input_base_path}"
 
-  
   echo "Dataset preparation completed."
 fi
 
