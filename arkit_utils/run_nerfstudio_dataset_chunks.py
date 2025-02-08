@@ -1,17 +1,17 @@
-import os
-import shutil
 import argparse
-from pathlib import Path
-import math
-import torch
-import numpy as np
-from typing import List, Dict, Tuple, Optional, Union
-from datetime import datetime
-from sklearn.cluster import KMeans
-import matplotlib.pyplot as plt
-from background_color import get_background_color
 from dataclasses import dataclass
-import subprocess
+from datetime import datetime
+import math
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+from pathlib import Path
+from sklearn.cluster import KMeans
+import shutil
+import torch
+from typing import Dict, List, Optional, Tuple, Union
+
+from background_color import get_background_color
 
 @dataclass
 class TrainingConfig:
@@ -248,32 +248,6 @@ def split_colmap_dataset(colmap_path: Path, output_base: Path, input_path: Path,
                 data_line = lines[lines.index(image_entry + '\n') + 1]
                 f.write(data_line)
         
-        # NEW: Copy corresponding depth and normal files
-        chunk_image_dir = chunk_dir.parent.parent / "images"
-        create_directory(chunk_image_dir)
-        
-        # Create depth/normal directories for chunk
-        chunk_depth_dir = chunk_dir.parent.parent / "mono_depth"
-        chunk_normal_dir = chunk_dir.parent.parent / "normals_from_pretrain"
-        create_directory(chunk_depth_dir)
-        create_directory(chunk_normal_dir)
-        
-        # Copy matching files
-        for image_entry in chunk_entries:
-            image_name = image_entry.split()[-1].split('/')[-1]
-            base_name = Path(image_name).stem
-            # Copy depth file
-
-            src_depth = input_path.parent / f"{input_path.parent.name}_nerfstudio" / "mono_depth" / f"{base_name}.npy"
-            if src_depth.exists():
-                shutil.copy2(src_depth, chunk_depth_dir / f"{base_name}.npy")
-            
-            
-            # Copy normal file
-            src_normal = input_path.parent / f"{input_path.parent.name}_nerfstudio" / "normals_from_pretrain" / f"{base_name}.png"
-            if src_normal.exists():
-                shutil.copy2(src_normal, chunk_normal_dir / f"{base_name}.png")
-        
         chunk_info.append(chunk_dir)
 
     return chunk_info
@@ -456,31 +430,6 @@ def split_colmap_dataset_by_region(colmap_path: Path, output_base: Path, input_p
             # Write filtered points3D.txt
             write_points3D(region_points3D, chunk_dir / "points3D.txt")
             
-            # NEW: Copy corresponding depth and normal files
-            chunk_image_dir = chunk_dir.parent.parent / "images"
-            create_directory(chunk_image_dir)
-            
-            # Create depth/normal directories for chunk
-            chunk_depth_dir = chunk_dir.parent.parent / "mono_depth"
-            chunk_normal_dir = chunk_dir.parent.parent / "normals_from_pretrain"
-            create_directory(chunk_depth_dir)
-            create_directory(chunk_normal_dir)
-            
-            # Copy matching files
-            for image_entry in region_entries:
-                image_name = image_entry.split()[-1].split('/')[-1]
-                base_name = Path(image_name).stem
-                
-                # Copy depth file
-                src_depth = input_path / "mono_depth" / f"{base_name}.npy"
-                if src_depth.exists():
-                    shutil.copy2(src_depth, chunk_depth_dir / f"{base_name}.npy")
-                
-                # Copy normal file
-                src_normal = input_path / "normals_from_pretrain" / f"{base_name}.png"
-                if src_normal.exists():
-                    shutil.copy2(src_normal, chunk_normal_dir / f"{base_name}.png")
-            
             chunk_info.append((chunk_dir, region_bbox))
             print(f"Region {i}_{j}: {len(region_image_ids)} images, {len(region_points3D)} points")
             print(f"Region bbox: min={region_bbox[0]}, max={region_bbox[1]}")
@@ -564,31 +513,6 @@ def split_colmap_dataset_by_cluster(colmap_path: Path, output_base: Path, input_
                 
         # Write filtered points3D.txt
         write_points3D(cluster_points3D, chunk_dir / "points3D.txt")
-        
-        # NEW: Copy corresponding depth and normal files
-        chunk_image_dir = chunk_dir.parent.parent / "images"
-        create_directory(chunk_image_dir)
-        
-        # Create depth/normal directories for chunk
-        chunk_depth_dir = chunk_dir.parent.parent / "mono_depth"
-        chunk_normal_dir = chunk_dir.parent.parent / "normals_from_pretrain"
-        create_directory(chunk_depth_dir)
-        create_directory(chunk_normal_dir)
-        
-        # Copy matching files
-        for image_entry in cluster_entries:
-            image_name = image_entry.split()[-1].split('/')[-1]
-            base_name = Path(image_name).stem
-            
-            # Copy depth file
-            src_depth = input_path / "mono_depth" / f"{base_name}.npy"
-            if src_depth.exists():
-                shutil.copy2(src_depth, chunk_depth_dir / f"{base_name}.npy")
-            
-            # Copy normal file
-            src_normal = input_path / "normals_from_pretrain" / f"{base_name}.png"
-            if src_normal.exists():
-                shutil.copy2(src_normal, chunk_normal_dir / f"{base_name}.png")
         
         chunk_info.append((chunk_dir, cluster_bbox))
         print(f"Cluster {cluster_idx}: {len(cluster_image_ids)} images, {len(cluster_points3D)} points")
@@ -785,7 +709,11 @@ def main(args):
                 is_chunk=True
             )
             print(f"Training chunk {chunk_name} with command: {cmd}")
-            os.system(cmd)
+            
+            # Execute chunk training with error handling
+            return_code = os.system(cmd)
+            if return_code != 0:
+                raise RuntimeError(f"Chunk training failed for {chunk_name} with return code {return_code}")
 
         # Find latest checkpoint
         timestamp_dirs = [d for d in model_dir.iterdir() if d.is_dir()]
@@ -813,20 +741,21 @@ def main(args):
     combined_dir = output_root / parent_name / 'splatfacto' / timestamp
     create_directory(combined_dir / "nerfstudio_models")
     
-    # Instead of directly calling combine_checkpoints, use the CLI command
-    combine_cmd = [
-        "python", 
-        str(Path(__file__).parent / "combine_chunk_checkpoints.py"),
-        "--chunks_dir", str(chunks_dir),
-        "--output_dir", str(combined_dir),
-        "--device", "cuda"
-    ]
+    # Combine checkpoints using os.system
+    combine_cmd = (
+        f"python {Path(__file__).parent}/combine_chunk_checkpoints.py "
+        f"--chunks_dir {chunks_dir} "
+        f"--output_dir {combined_dir} "
+        f"--device cuda"
+    )
     
     if args.debug:
-        combine_cmd.append("--debug")
+        combine_cmd += " --debug"
     
-    print("\nRunning combine_chunk_checkpoints with command:", " ".join(combine_cmd))
-    subprocess.run(combine_cmd, check=True)
+    print("\nRunning combine_chunk_checkpoints with command:", combine_cmd)
+    return_code = os.system(combine_cmd)
+    if return_code != 0:
+        raise RuntimeError(f"Checkpoint combination failed with return code {return_code}")
 
     # Create final training config
     final_config = FinalTrainingConfig(
@@ -835,7 +764,7 @@ def main(args):
         background_color=bg_color_str if 'bg_color_str' in locals() else None
     )
 
-    # Get final training command
+    # Get and execute final training command
     final_cmd = get_training_command(
         config=final_config,
         data_path=output_root,
@@ -845,7 +774,9 @@ def main(args):
     )
 
     print("Running final training with command:", final_cmd)
-    subprocess.run(final_cmd, shell=True, check=True)
+    return_code = os.system(final_cmd)
+    if return_code != 0:
+        raise RuntimeError(f"Final training failed with return code {return_code}")
 
     # Clean up intermediate checkpoint after final training is complete
     try:
@@ -854,8 +785,11 @@ def main(args):
     except Exception as e:
         print(f"\nWarning: Failed to clean up intermediate checkpoint: {e}")
 
-
 if __name__ == "__main__":
+    try:
+        parser = argparse.ArgumentParser(description="Train nerfstudio model on chunked dataset")
+        parser.add_argument("--input_path", help="Path to the root directory of run_arkit_3dgs.sh output")
+        parser.add_argument("--method", type=str, default='arkit', help="Choose pose optimization methods")
     parser = argparse.ArgumentParser(description="Train nerfstudio model on chunked dataset")
     parser.add_argument("--input_path", help="Path to the root directory of run_arkit_3dgs.sh output")
     parser.add_argument("--method", type=str, default='arkit', help="Choose pose optimization methods")

@@ -69,7 +69,7 @@ def main(args):
 
     cmds.extend([
         '--pipeline.model.use-mesh-initialization True',
-        '--pipeline.model.combine-mesh-sfm True'
+        '--pipeline.model.combine-mesh-sfm True',
         '--pipeline.model.rasterize-mode antialiased',
         '--pipeline.model.use-scale-regularization False',
         '--pipeline.model.camera-optimizer.mode SO3xR3',

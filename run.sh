@@ -18,6 +18,37 @@ else
     USE_COLORS=false
 fi
 
+# Helper functions - MOVED TO TOP
+remove_and_create_folder() {
+  if [ -d "$1" ]; then
+    rm -rf "$1"
+  fi
+  mkdir -p "$1"
+}
+
+# Function to log time spent on each step
+log_time() {
+  local step_name=$1
+  local start_time=$2
+  local end_time=$3
+  local duration=$((end_time - start_time))
+  echo "${step_name},${duration}" >> "${output_csv}"
+}
+
+# Function to execute a step and log its time
+execute_step() {
+    local step_name=$1
+    shift
+    local command=$@
+    local start_time=$(date +%s)
+    echo "================================================"
+    echo "Executing step: $step_name"
+    echo "================================================"
+    eval $command || { echo "Failed at step: $step_name"; exit 1; }
+    local end_time=$(date +%s)
+    log_time "$step_name" $start_time $end_time
+}
+
 # Logging functions
 log() {
     local level=$1; shift
@@ -195,6 +226,11 @@ log_info "  skip_chunk_training: ${skip_chunk_training}"
 log_info "  filter_gaussians: ${filter_gaussians}"
 log_info "  is_adaptive: ${is_adaptive}"
 
+# create output csv
+remove_and_create_folder "${input_base_path}/../output"
+output_csv="${input_base_path}/../output/duration.csv"
+echo "Step,Duration (secs)" > "${output_csv}"
+
 # New adaptive training logic moved after preprocessing
 if [ "$skip_preprocess" = false ]; then
   echo "=== Preprocess ARkit data === "
@@ -269,42 +305,6 @@ if [ "$is_adaptive" = true ]; then
         fi
     fi
 fi
-
-
-remove_and_create_folder() {
-  if [ -d "$1" ]; then
-    rm -rf "$1"
-  fi
-  mkdir -p "$1"
-}
-
-# Function to log time spent on each step
-log_time() {
-  local step_name=$1
-  local start_time=$2
-  local end_time=$3
-  local duration=$((end_time - start_time))
-  echo "${step_name},${duration}" >> "${output_csv}"
-}
-
-# Function to execute a step and log its time
-execute_step() {
-    local step_name=$1
-    shift
-    local command=$@
-    local start_time=$(date +%s)
-    echo "================================================"
-    echo "Executing step: $step_name"
-    echo "================================================"
-    eval $command || { echo "Failed at step: $step_name"; exit 1; }
-    local end_time=$(date +%s)
-    log_time "$step_name" $start_time $end_time
-}
-
-# create output csv
-remove_and_create_folder "${input_base_path}/../output"
-output_csv="${input_base_path}/../output/duration.csv"
-echo "Step,Duration (secs)" > "${output_csv}"
 
 # Training section
 if [ "$use_icp" = true ]; then
