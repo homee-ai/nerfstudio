@@ -295,26 +295,28 @@ def main():
     for index in tqdm(range(2, 2000)):
         posed_rgbd = reader.get_posed_rgbd(index)
         pcd = posed_rgbd.to_point_cloud()
+        if pcd_all is None:
+            pcd_all = pcd
+        else:
+            pcd_all += pcd
 
-        if args.index >= 0:
+    pcd_all_downsampled = pcd_all.voxel_down_sample(voxel_size=0.05)
+
+    if args.index >= 0:
+        while True:
             # server.scene.add_frame(
             #     f"frame{index}", wxyz=posed_rgbd.q_w2c, position=posed_rgbd.t_w2c
             # )
 
             server.scene.add_point_cloud(
-                f"pcd{index}", np.asarray(pcd.points), np.asarray(pcd.colors)
+                f"pcd{index}",
+                np.asarray(pcd_all_downsampled.points),
+                np.asarray(pcd_all_downsampled.colors),
             )
-        else:
-            if pcd_all is None:
-                pcd_all = pcd
-            else:
-                pcd_all += pcd
-
-    if args.index >= 0:
-        while True:
-            time.sleep(0.033)
     else:
-        assert o3d.io.write_point_cloud("pcd_all.ply", pcd_all, write_ascii=True)
+        assert o3d.io.write_point_cloud(
+            "pcd_all_downsampled.ply", pcd_all_downsampled, write_ascii=True
+        )
 
 
 if __name__ == "__main__":
