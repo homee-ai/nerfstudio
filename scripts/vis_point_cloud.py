@@ -1,9 +1,12 @@
 # 4) Use Knn search to show multiple point clouds which are color coded
+# Example: python scripts/vis_point_cloud.py -d /home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/depth/ -c /home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/post/images/ -p /home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/post/sparse/offline/colmap_ICP/final/images.txt -k /home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/sparse/0/distort_cameras.txt
 
 import time
+from tqdm import tqdm
 from dataclasses import dataclass
 from pathlib import Path
 
+import argparse
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
@@ -11,8 +14,10 @@ import open3d as o3d
 import viser
 from pyquaternion import Quaternion
 
-from nerfstudio.data.utils.colmap_parsing_utils import (read_cameras_text,
-                                                        read_images_text)
+from nerfstudio.data.utils.colmap_parsing_utils import (
+    read_cameras_text,
+    read_images_text,
+)
 
 
 @dataclass
@@ -226,54 +231,90 @@ class DatasetReader:
         return depth_map
 
 
-def main():
-    server = viser.ViserServer()
+def parse_arg():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--depth",
+        "-d",
+        required=True,
+        type=Path,
+        help="path to a folder which stores depth images in *_depth.txt",
+    )
+    parser.add_argument(
+        "--color",
+        "-c",
+        required=True,
+        type=Path,
+        help="path to a folder which stores color image in *.png",
+    )
+    parser.add_argument(
+        "--pose",
+        "-p",
+        required=True,
+        type=Path,
+        help="path to images.txt which stores camera poses in colmap definition",
+    )
+    parser.add_argument(
+        "--calib",
+        "-k",
+        required=True,
+        type=Path,
+        help="path to cameras.txt which stores camera intrinsic parameters",
+    )
+    parser.add_argument(
+        "--index",
+        "-i",
+        default=-1,
+        type=int,
+        help="select which point cloud and its neighboring point cloud(s) to be shown in viser (default: save all point clouds in a ply file)",
+    )
+    return parser.parse_args()
 
-    # TODO: use argparse
-    # Hardcode path here...
-    depth_path = Path(
-        "/home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/depth/"
-    )
-    color_path = Path(
-        "/home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/post/images/"
-    )
-    arkit_poses = Path(
-        "/home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/sparse/0/images.txt"
-    )
-    colmap_poses = Path(
-        "/home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/post/sparse/offline/colmap/final/images.txt"
-    )
-    colmap_icp_poses = Path(
-        "/home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/post/sparse/offline/colmap_ICP/final/images.txt"
-    )
-    k_path = Path(
-        "/home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/sparse/0/distort_cameras.txt"
-    )
+
+def main():
+    args = parse_arg()
+
+    if args.index >= 0:
+        server = viser.ViserServer()
+
+    depth_path = args.depth
+    color_path = args.color
+    pose_path = args.pose
+    k_path = args.calib
 
     assert depth_path.is_dir()
     assert color_path.is_dir()
-    assert arkit_poses.is_file()
-    assert colmap_poses.is_file()
-    assert colmap_icp_poses.is_file()
+    assert pose_path.is_file()
     assert k_path.is_file()
 
     # FIX: using arkit_poses won't work
-    reader = DatasetReader(depth_path, color_path, k_path, colmap_icp_poses, True)
+    reader = DatasetReader(depth_path, color_path, k_path, pose_path, True)
 
     # TODO: show point cloud in a sliding window instead of all
-    for index in range(2, 2000):
+    pcd_all = None
+    for index in tqdm(range(2, 2000)):
         posed_rgbd = reader.get_posed_rgbd(index)
         pcd = posed_rgbd.to_point_cloud()
 
-        # server.scene.add_frame(
-        #     f"frame{index}", wxyz=posed_rgbd.q_w2c, position=posed_rgbd.t_w2c
-        # )
+        if args.index >= 0:
+            # server.scene.add_frame(
+            #     f"frame{index}", wxyz=posed_rgbd.q_w2c, position=posed_rgbd.t_w2c
+            # )
 
-        server.scene.add_point_cloud(
-            f"pcd{index}", np.asarray(pcd.points), np.asarray(pcd.colors)
-        )
-    while True:
-        time.sleep(0.033)
+            server.scene.add_point_cloud(
+                f"pcd{index}", np.asarray(pcd.points), np.asarray(pcd.colors)
+            )
+        else:
+            if pcd_all is None:
+                pcd_all = pcd
+            else:
+                pcd_all += pcd
+
+    if args.index >= 0:
+        while True:
+            time.sleep(0.033)
+    else:
+        assert o3d.io.write_point_cloud("pcd_all.ply", pcd_all, write_ascii=True)
 
 
 if __name__ == "__main__":
