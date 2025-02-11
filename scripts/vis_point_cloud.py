@@ -1,18 +1,18 @@
-# 4) Use Knn search to show multiple point clouds which are color coded
-# Example: python scripts/vis_point_cloud.py -d /home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/depth/ -c /home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/post/images/ -p /home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/post/sparse/offline/colmap_ICP/final/images.txt -k /home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/sparse/0/distort_cameras.txt
-
-import time
-from tqdm import tqdm
-from dataclasses import dataclass
-from pathlib import Path
+# Example: python scripts/vis_point_cloud.py -d /home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/depth/ -c /home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/post/images/ -p /home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/post/sparse/offline/colmap_ICP/final/images.txt -k /home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/sparse/0/distort_cameras.txt -m /home/fuyu/workspace/data/2025-01-26T04_09_44.533Z/3DGS/colmap/post/sparse/offline/colmap/matches.h5
 
 import argparse
+from dataclasses import dataclass
+from pathlib import Path
+from typing import List
+
 import cv2
+import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 import open3d as o3d
 import viser
 from pyquaternion import Quaternion
+from tqdm import tqdm
 
 from nerfstudio.data.utils.colmap_parsing_utils import (
     read_cameras_text,
@@ -96,10 +96,12 @@ class DatasetReader:
         color_folder: Path,
         calib_file: Path,
         pose_file: Path,
+        match_file: Path,
         is_pose_colmap: bool,
     ):
         assert "cameras.txt" in calib_file.name  # colmap format
         assert pose_file.name == "images.txt"  # colmap format
+        assert match_file.name == "matches.h5"
 
         self.id_to_depth_path = {
             int(depth_path.stem[:-6]): depth_path
@@ -113,6 +115,8 @@ class DatasetReader:
         self.id_to_k = read_cameras_text(calib_file)
         self.id_to_pose = read_images_text(pose_file)
 
+        self.match_file = match_file
+
         print(f"Number of depth maps: {len(self.id_to_depth_path)}")
         print(f"Number of color images: {len(self.id_to_color_path)}")
         print(f"Number of calibrations: {len(self.id_to_k)}")
@@ -125,6 +129,9 @@ class DatasetReader:
             and index in self.id_to_k
             and index in self.id_to_pose
         )
+
+    def get_indices(self) -> List[int]:
+        return [index for index in range(1, 10000) if self.peek(index)]
 
     def get_posed_rgbd(self, index: int) -> PosedRGBDWithCalibration:
         # Convert stored depth value from meter to mm
@@ -163,6 +170,10 @@ class DatasetReader:
             depth,
             rgb,
         )
+
+    def get_matches(self, index: int) -> List[int]:
+        with h5py.File(self.match_file, "r") as fd:
+            return [int(Path(key).stem) for key in fd[str(index).zfill(4) + ".png"]]
 
     # TODO: move to util or reuse code in arkit_pose_to_colmap.py
     def __arkit_pose_to_colmap_pose(arkit_pose):
@@ -268,6 +279,13 @@ def parse_arg():
         type=int,
         help="select which point cloud and its neighboring point cloud(s) to be shown in viser (default: save all point clouds in a ply file)",
     )
+    parser.add_argument(
+        "--matches",
+        "-m",
+        required=True,
+        type=Path,
+        help="path to matches.h5",
+    )
     return parser.parse_args()
 
 
@@ -281,6 +299,7 @@ def main():
     color_path = args.color
     pose_path = args.pose
     k_path = args.calib
+    match_path = args.matches
 
     assert depth_path.is_dir()
     assert color_path.is_dir()
@@ -288,32 +307,41 @@ def main():
     assert k_path.is_file()
 
     # FIX: using arkit_poses won't work
-    reader = DatasetReader(depth_path, color_path, k_path, pose_path, True)
+    reader = DatasetReader(depth_path, color_path, k_path, pose_path, match_path, True)
 
-    # TODO: show point cloud in a sliding window instead of all
-    pcd_all = None
-    for index in tqdm(range(2, 2000)):
-        posed_rgbd = reader.get_posed_rgbd(index)
-        pcd = posed_rgbd.to_point_cloud()
-        if pcd_all is None:
-            pcd_all = pcd
-        else:
-            pcd_all += pcd
-
-    pcd_all_downsampled = pcd_all.voxel_down_sample(voxel_size=0.05)
+    indices = sorted(
+        reader.get_matches(args.index) if args.index >= 0 else reader.get_indices()
+    )
 
     if args.index >= 0:
         while True:
-            # server.scene.add_frame(
-            #     f"frame{index}", wxyz=posed_rgbd.q_w2c, position=posed_rgbd.t_w2c
-            # )
+            for index in indices:
+                posed_rgbd = reader.get_posed_rgbd(index)
+                pcd = posed_rgbd.to_point_cloud()
 
-            server.scene.add_point_cloud(
-                f"pcd{index}",
-                np.asarray(pcd_all_downsampled.points),
-                np.asarray(pcd_all_downsampled.colors),
-            )
+                server.scene.add_frame(
+                    f"frame{index}", wxyz=posed_rgbd.q_w2c, position=posed_rgbd.t_w2c
+                )
+
+                server.scene.add_point_cloud(
+                    f"pcd{index}",
+                    np.asarray(pcd.points),
+                    np.asarray(pcd.colors),
+                )
     else:
+        pcd_all = None
+
+        for index in tqdm(indices):
+            posed_rgbd = reader.get_posed_rgbd(index)
+            pcd = posed_rgbd.to_point_cloud()
+
+            if pcd_all is None:
+                pcd_all = pcd
+            else:
+                pcd_all += pcd
+
+            pcd_all_downsampled = pcd_all.voxel_down_sample(voxel_size=0.05)
+
         assert o3d.io.write_point_cloud(
             "pcd_all_downsampled.ply", pcd_all_downsampled, write_ascii=True
         )
