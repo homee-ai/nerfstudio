@@ -752,6 +752,9 @@ def main(args):
     if args.debug:
         combine_cmd += " --debug"
     
+    if args.keep_visible:
+        combine_cmd += " --use_mask"
+    
     print("\nRunning combine_chunk_checkpoints with command:", combine_cmd)
     return_code = os.system(combine_cmd)
     if return_code != 0:
@@ -807,6 +810,8 @@ if __name__ == "__main__":
                       help="Skip chunk training and use existing checkpoints")
     parser.add_argument("--filter-gaussians", action="store_true", default=True,
                       help="Whether to filter gaussians when combining chunks")
+    parser.add_argument("--keep-visible", action="store_true", default=False,
+                      help="Keep only visible gaussians when combining chunks")
     parser.add_argument("--debug", action="store_true", default=False,
                       help="Enable debug mode for combine_chunk_checkpoints")
     args = parser.parse_args()

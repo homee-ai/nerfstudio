@@ -102,7 +102,7 @@ trap 'error_handler $LINENO "$BASH_COMMAND"' ERR
 
 # Validate the input arguments
 if [ $# -lt 1 ]; then
-  echo "Usage: $0 <input_base_path> [<method1> <method2> ...] [--icp] [--skip-preprocess] [--resume-train <path>] [--chunked-train] [--is-adaptive] [--chunk-size <size>] [--chunk-iterations <iters>] [--final-iterations <iters>] [--partition-method <method>] [--m-region <size>] [--n-region <size>] [--n-clusters <clusters>] [--skip-chunk-training] [--no-filter-gaussians]"
+  echo "Usage: $0 <input_base_path> [<method1> <method2> ...] [--icp] [--skip-preprocess] [--resume-train <path>] [--chunked-train] [--chunk-size <size>] [--chunk-iterations <iters>] [--final-iterations <iters>] [--partition-method <method>] [--m-region <size>] [--n-region <size>] [--n-clusters <clusters>] [--skip-chunk-training] [--no-filter-gaussians] [--keep-visible] [--is-adaptive]"
   echo "Available methods: arkit colmap, loftr, lightglue, glomap"
   echo "Default method: arkit"
   exit 1
@@ -127,6 +127,7 @@ filter_gaussians=true
 VERBOSE=false
 QUIET=false
 is_adaptive=false
+keep_visible=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -191,6 +192,10 @@ while [[ $# -gt 0 ]]; do
       filter_gaussians=false
       shift
       ;;
+    --keep-visible)
+      keep_visible=true
+      shift
+      ;;
     --is-adaptive)
       is_adaptive=true
       shift
@@ -224,6 +229,7 @@ log_info "  n_region: ${n_region}"
 log_info "  n_clusters: ${n_clusters}"
 log_info "  skip_chunk_training: ${skip_chunk_training}"
 log_info "  filter_gaussians: ${filter_gaussians}"
+log_info "  keep_visible: ${keep_visible:-false}"
 log_info "  is_adaptive: ${is_adaptive}"
 
 # create output csv
@@ -322,7 +328,8 @@ if [ "$use_icp" = true ]; then
       --n_region ${n_region} \
       --n_clusters ${n_clusters} \
       $([ "$skip_chunk_training" = true ] && echo "--skip-chunk-training") \
-      $([ "$filter_gaussians" = true ] && echo "--filter-gaussians")"
+      $([ "$filter_gaussians" = true ] && echo "--filter-gaussians") \
+      $([ "${keep_visible:-false}" = true ] && echo "--keep-visible")"
   else
     execute_step "Training nerfstudiExecuting step: Training nerfstudioo" \
       "python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} \
@@ -342,7 +349,8 @@ else
       --n_region ${n_region} \
       --n_clusters ${n_clusters} \
       $([ "$skip_chunk_training" = true ] && echo "--skip-chunk-training") \
-      $([ "$filter_gaussians" = true ] && echo "--filter-gaussians")"
+      $([ "$filter_gaussians" = true ] && echo "--filter-gaussians") \
+      $([ "${keep_visible:-false}" = true ] && echo "--keep-visible")"
   else
     execute_step "Training nerfstudio" \
       "python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} \
