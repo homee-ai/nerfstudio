@@ -22,7 +22,9 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Literal, Optional, Tuple, Type, Union
-
+from copy import deepcopy
+import os
+import cv2
 import numpy as np
 import torch
 from gsplat.cuda_legacy._torch_impl import quat_to_rotmat
@@ -128,8 +130,10 @@ class SplatfactoModelConfig(ModelConfig):
     """period of steps where gaussians are culled and densified"""
     resolution_schedule: int = 3000
     """training starts at 1/d resolution, every n steps this is doubled"""
-    background_color: Literal["random", "black", "white"] = "random"
-    """Whether to randomize the background color."""
+    background_color: Literal["random", "black", "white", "custom"] = "random"
+    """Whether to randomize the background color or use specific color."""
+    custom_background_color: Optional[str] = None
+    """Custom background color in R,G,B format (comma-separated values between 0-255)"""
     num_downscales: int = 2
     """at the beginning, resolution is 1/2^d, where d is this number"""
     cull_alpha_thresh: float = 0.1
@@ -202,6 +206,14 @@ class SplatfactoModelConfig(ModelConfig):
     color_corrected_metrics: bool = False
     """If True, apply color correction to the rendered images before computing the metrics."""
     
+    memory_threshold: float = 0.20
+    """Minimum free GPU memory ratio required for gaussian densification. If free memory falls below this threshold (as fraction of total memory), densification will be skipped."""
+
+    debug_mode: bool = False
+    """If True, adds constant number of gaussians during each densification for testing"""
+    
+    debug_num_gaussians: int = 2000000
+    """Number of gaussians to add during each densification when in debug mode"""
 
 
 class SplatfactoModel(Model):
@@ -221,9 +233,11 @@ class SplatfactoModel(Model):
     ):
         self.seed_points = seed_points
         super().__init__(*args, **kwargs)
+        
+        # Initialize global visible mask as None - it will be properly initialized in populate_modules
+        self.global_visible_mask = None
 
         # use_scale_regularization and use_mesh_initialization can't be able at the same time
-        # Now just simply set use_scale_regularization to false
         if self.config.use_scale_regularization and self.config.use_mesh_initialization:
             raise ValueError("use_scale_regularization and use_mesh_initialization can't be able at the same time")
         
@@ -235,8 +249,6 @@ class SplatfactoModel(Model):
             if pcd is None:
                 raise ValueError("Trying to use_mesh_initialization, scene.obj must be under sparse/0 folder")
             
-            print("init gaussian from mesh")
-
             (means_mesh, 
             scales_mesh, 
             quats_mesh) = create_from_pcd(pcd, self.config.sh_degree)
@@ -352,6 +364,11 @@ class SplatfactoModel(Model):
                 "opacities": opacities,
             }
         )
+        
+        # Initialize global_visible_mask if not present in state dict
+        if not hasattr(self, "global_visible_mask") or self.global_visible_mask is None:
+            self.register_buffer("global_visible_mask", 
+                               torch.zeros(means.shape[0], dtype=torch.bool, device=means.device))
 
         self.camera_optimizer: CameraOptimizer = self.config.camera_optimizer.setup(
             num_cameras=self.num_train_data, device="cuda"
@@ -372,7 +389,7 @@ class SplatfactoModel(Model):
                 [0.1490, 0.1647, 0.2157]
             )  # This color is the same as the default background color in Viser. This would only affect the background color when rendering.
         else:
-            self.background_color = get_color(self.config.background_color)
+            self.background_color = self._get_background_color()
 
         if self.config.use_bilateral_grid:
             self.bil_grids = BilateralGrid(
@@ -425,21 +442,30 @@ class SplatfactoModel(Model):
     def opacities(self):
         return self.gauss_params["opacities"]
 
-    def load_state_dict(self, dict, **kwargs):  # type: ignore
-        # resize the parameters to match the new number of points
-        self.step = 30000
+    def load_state_dict(self, dict, **kwargs):
+        """Override load state dict to handle global visible mask."""
+        # Extract global visible mask if present
+        if "global_visible_mask" in dict:
+            self.register_buffer("global_visible_mask", dict.pop("global_visible_mask"))
+        
+        # For backwards compatibility, we remap the names of parameters
         if "means" in dict:
-            # For backwards compatibility, we remap the names of parameters from
-            # means->gauss_params.means since old checkpoints have that format
             for p in ["means", "scales", "quats", "features_dc", "features_rest", "opacities"]:
                 dict[f"gauss_params.{p}"] = dict[p]
+                
         newp = dict["gauss_params.means"].shape[0]
         for name, param in self.gauss_params.items():
             old_shape = param.shape
             new_shape = (newp,) + old_shape[1:]
             self.gauss_params[name] = torch.nn.Parameter(torch.zeros(new_shape, device=self.device))
+            
+        # Initialize global_visible_mask if not present in state dict
+        if not hasattr(self, "global_visible_mask") or self.global_visible_mask is None:
+            self.register_buffer("global_visible_mask", 
+                               torch.zeros(newp, dtype=torch.bool, device=self.device))
+            
         super().load_state_dict(dict, **kwargs)
-
+        
     def k_nearest_sklearn(self, x: torch.Tensor, k: int):
         """
             Find k-nearest neighbors using sklearn's NearestNeighbors.
@@ -524,7 +550,22 @@ class SplatfactoModel(Model):
         with torch.no_grad():
             # keep track of a moving average of grad norms
             visible_mask = (self.radii > 0).flatten()
-            grads = self.xys.absgrad[0][visible_mask].norm(dim=-1)  # type: ignore
+            
+            # Ensure global_visible_mask exists and has correct shape
+            if not hasattr(self, "global_visible_mask") or self.global_visible_mask is None:
+                self.register_buffer("global_visible_mask", 
+                                   torch.zeros_like(visible_mask, dtype=torch.bool))
+            elif self.global_visible_mask.shape != visible_mask.shape:
+                self.register_buffer("global_visible_mask",
+                                   torch.zeros_like(visible_mask, dtype=torch.bool))
+            
+            # Update global visible mask with OR operation
+            self.global_visible_mask = torch.logical_or(
+                self.global_visible_mask,
+                visible_mask
+            )
+            
+            grads = self.xys.absgrad[0][visible_mask].norm(dim=-1)
             # print(f"grad norm min {grads.min().item()} max {grads.max().item()} mean {grads.mean().item()} size {grads.shape}")
             if self.xys_grad_norm is None:
                 self.xys_grad_norm = torch.zeros(self.num_points, device=self.device, dtype=torch.float32)
@@ -553,30 +594,54 @@ class SplatfactoModel(Model):
         if self.step <= self.config.warmup_length:
             return
         with torch.no_grad():
-            # Offset all the opacity reset logic by refine_every so that we don't
-            # save checkpoints right when the opacity is reset (saves every 2k)
-            # then cull
-            # only split/cull if we've seen every image since opacity reset
+            # Check available GPU memory before densification
+            if torch.cuda.is_available():
+                total_memory = torch.cuda.get_device_properties(self.device).total_memory
+                reserved_memory = torch.cuda.memory_reserved(self.device)
+                allocated_memory = torch.cuda.memory_allocated(self.device)
+                free_memory = total_memory - reserved_memory
+                
+                # Skip densification if free memory is below configured threshold
+                if free_memory / total_memory < self.config.memory_threshold:
+                    return
+
             reset_interval = self.config.reset_alpha_every * self.config.refine_every
             do_densification = (
                 self.step < self.config.stop_split_at
                 and self.step % reset_interval > self.num_train_data + self.config.refine_every
             )
             if do_densification:
-                # then we densify
-                assert self.xys_grad_norm is not None and self.vis_counts is not None and self.max_2Dsize is not None
-                avg_grad_norm = (self.xys_grad_norm / self.vis_counts) * 0.5 * max(self.last_size[0], self.last_size[1])
-                high_grads = (avg_grad_norm > self.config.densify_grad_thresh).squeeze()
-                splits = (self.scales.exp().max(dim=-1).values > self.config.densify_size_thresh).squeeze()
-                if self.step < self.config.stop_screen_size_at:
-                    splits |= (self.max_2Dsize > self.config.split_screen_size).squeeze()
-                splits &= high_grads
-                nsamps = self.config.n_split_samples
-                split_params = self.split_gaussians(splits, nsamps)
+                if self.config.debug_mode:
+                    # Create debug mask that selects first N gaussians
+                    debug_mask = torch.zeros(self.num_points, dtype=torch.bool, device=self.device)
+                    debug_mask[:min(self.config.debug_num_gaussians, self.num_points)] = True
+                    
+                    # Force split these gaussians
+                    splits = debug_mask
+                    nsamps = self.config.n_split_samples
+                    split_params = self.split_gaussians(splits, nsamps)
+                    
+                    # Force duplicate these gaussians 
+                    dups = debug_mask
+                    dup_params = self.dup_gaussians(dups)
+                    
+                    CONSOLE.log(f"[DEBUG] Adding {self.config.debug_num_gaussians * (nsamps + 1)} gaussians for testing")
+                else:
+                    # Original densification logic
+                    assert self.xys_grad_norm is not None and self.vis_counts is not None and self.max_2Dsize is not None
+                    avg_grad_norm = (self.xys_grad_norm / self.vis_counts) * 0.5 * max(self.last_size[0], self.last_size[1])
+                    high_grads = (avg_grad_norm > self.config.densify_grad_thresh).squeeze()
+                    splits = (self.scales.exp().max(dim=-1).values > self.config.densify_size_thresh).squeeze()
+                    if self.step < self.config.stop_screen_size_at:
+                        splits |= (self.max_2Dsize > self.config.split_screen_size).squeeze()
+                    splits &= high_grads
+                    nsamps = self.config.n_split_samples
+                    split_params = self.split_gaussians(splits, nsamps)
 
-                dups = (self.scales.exp().max(dim=-1).values <= self.config.densify_size_thresh).squeeze()
-                dups &= high_grads
-                dup_params = self.dup_gaussians(dups)
+                    dups = (self.scales.exp().max(dim=-1).values <= self.config.densify_size_thresh).squeeze()
+                    dups &= high_grads
+                    dup_params = self.dup_gaussians(dups)
+
                 for name, param in self.gauss_params.items():
                     self.gauss_params[name] = torch.nn.Parameter(
                         torch.cat([param.detach(), split_params[name], dup_params[name]], dim=0)
@@ -785,15 +850,25 @@ class SplatfactoModel(Model):
         return {"rgb": rgb, "depth": depth, "accumulation": accumulation, "background": background}
 
     def _get_background_color(self):
+        # get device from means
+        device = self.means.device
         if self.config.background_color == "random":
             if self.training:
-                background = torch.rand(3, device=self.device)
+                background = torch.rand(3, device=device)
             else:
-                background = self.background_color.to(self.device)
+                background = self.background_color.to(device)
         elif self.config.background_color == "white":
-            background = torch.ones(3, device=self.device)
+            background = torch.ones(3, device=device)
         elif self.config.background_color == "black":
-            background = torch.zeros(3, device=self.device)
+            background = torch.zeros(3, device=device)
+        elif self.config.background_color == "custom":
+            if self.config.custom_background_color is None:
+                raise ValueError("custom_background_color must be set when using custom background")
+            try:
+                r, g, b = map(int, self.config.custom_background_color.split(','))
+                background = torch.tensor([r, g, b], device=device) / 255.0
+            except Exception as e:
+                raise ValueError(f"Invalid custom_background_color format. Expected 'R,G,B': {e}")
         else:
             raise ValueError(f"Unknown background color {self.config.background_color}")
         return background
@@ -840,7 +915,7 @@ class SplatfactoModel(Model):
             crop_ids = self.crop_box.within(self.means).squeeze()
             if crop_ids.sum() == 0:
                 return self.get_empty_outputs(
-                    int(camera.width.item()), int(camera.height.item()), self.background_color
+                    int(camera.width.item()), int(camera.height.item()), self._get_background_color()
                 )
         else:
             crop_ids = None
@@ -1093,7 +1168,6 @@ class SplatfactoModel(Model):
         images_dict = {"img": combined_rgb}
 
         return metrics_dict, images_dict
-
 
 def create_from_pcd(pcd: MeshPointCloud, max_sh_degree: int):
     print("Creating GaussianMeshModel from MeshPointCloud")
