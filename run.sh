@@ -229,7 +229,7 @@ log_info "  n_region: ${n_region}"
 log_info "  n_clusters: ${n_clusters}"
 log_info "  skip_chunk_training: ${skip_chunk_training}"
 log_info "  filter_gaussians: ${filter_gaussians}"
-log_info "  keep_visible: ${keep_visible:-false}"
+log_info "  keep_visible: ${keep_visible}"
 log_info "  is_adaptive: ${is_adaptive}"
 
 # create output csv
@@ -329,7 +329,7 @@ if [ "$use_icp" = true ]; then
       --n_clusters ${n_clusters} \
       $([ "$skip_chunk_training" = true ] && echo "--skip-chunk-training") \
       $([ "$filter_gaussians" = true ] && echo "--filter-gaussians") \
-      $([ "${keep_visible:-false}" = true ] && echo "--keep-visible")"
+      $([ "$keep_visible" = true ] && echo "--keep-visible")"
   else
     execute_step "Training nerfstudiExecuting step: Training nerfstudioo" \
       "python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} \
@@ -350,7 +350,7 @@ else
       --n_clusters ${n_clusters} \
       $([ "$skip_chunk_training" = true ] && echo "--skip-chunk-training") \
       $([ "$filter_gaussians" = true ] && echo "--filter-gaussians") \
-      $([ "${keep_visible:-false}" = true ] && echo "--keep-visible")"
+      $([ "$keep_visible" = true ] && echo "--keep-visible")"
   else
     execute_step "Training nerfstudio" \
       "python arkit_utils/run_nerfstudio_dataset.py --input_path ${input_base_path} \
